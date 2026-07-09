@@ -2,6 +2,7 @@
 
 use crate::bag::SevenBag;
 use crate::board::{Board, Cell};
+use crate::hiscore;
 use crate::piece::{wall_kicks, Piece, PieceKind};
 
 fn gravity_ms(level: u32) -> u64 {
@@ -17,9 +18,9 @@ const LOCK_RESET_MAX: u32 = 15;
 const DAS_MS: u64 = 120;
 const ARR_MS: u64 = 20;
 const SOFT_DROP_MS: u64 = 25;
-/// Auto-release held keys when no press/repeat arrives (terminals rarely send key-up).
 const KEY_HOLD_TIMEOUT_MS: u64 = 70;
 const NEXT_COUNT: usize = 5;
+const LINE_CLEAR_FLASH_MS: u64 = 150;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClearType {
@@ -65,7 +66,9 @@ impl ClearType {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GamePhase {
+    Ready,
     Playing,
+    Clearing,
     Paused,
     GameOver,
 }
@@ -85,6 +88,7 @@ pub struct Game {
     pub hold_used: bool,
     bag: SevenBag,
     pub score: u64,
+    pub high_score: u64,
     pub lines: u32,
     pub level: u32,
     pub combo: i32,
@@ -93,6 +97,11 @@ pub struct Game {
     pub clear_flash_ms: u64,
     pub phase: GamePhase,
     pub pieces_placed: u32,
+    pub elapsed_ms: u64,
+    /// Rows currently flashing before they are removed.
+    pub flashing_rows: Vec<i32>,
+    flash_timer: u64,
+    pending_tspin: TSpinKind,
 
     gravity_accum: u64,
     lock_timer: Option<u64>,
@@ -118,21 +127,26 @@ impl Game {
     pub fn new() -> Self {
         let mut bag = SevenBag::new();
         let kind = bag.next();
-        let mut g = Self {
+        Self {
             board: Board::new(),
             current: Piece::new(kind),
             hold: None,
             hold_used: false,
             bag,
             score: 0,
+            high_score: hiscore::load(),
             lines: 0,
             level: 1,
             combo: -1,
             b2b: -1,
             last_clear: ClearType::None,
             clear_flash_ms: 0,
-            phase: GamePhase::Playing,
+            phase: GamePhase::Ready,
             pieces_placed: 0,
+            elapsed_ms: 0,
+            flashing_rows: Vec::new(),
+            flash_timer: 0,
+            pending_tspin: TSpinKind::None,
             gravity_accum: 0,
             lock_timer: None,
             lock_resets: 0,
@@ -149,11 +163,7 @@ impl Game {
             last_was_rotation: false,
             last_kick_index: 0,
             last_tspin: TSpinKind::None,
-        };
-        if g.board.is_block_out(&g.current) {
-            g.phase = GamePhase::GameOver;
         }
-        g
     }
 
     pub fn next_queue(&self) -> Vec<PieceKind> {
@@ -164,16 +174,38 @@ impl Game {
         self.board.ghost_y(&self.current)
     }
 
+    pub fn pps(&self) -> f64 {
+        if self.elapsed_ms == 0 {
+            return 0.0;
+        }
+        self.pieces_placed as f64 / (self.elapsed_ms as f64 / 1000.0)
+    }
+
+    pub fn time_label(&self) -> String {
+        let total_secs = self.elapsed_ms / 1000;
+        let m = total_secs / 60;
+        let s = total_secs % 60;
+        format!("{m:02}:{s:02}")
+    }
+
+    pub fn start(&mut self) {
+        if self.phase == GamePhase::Ready {
+            self.phase = GamePhase::Playing;
+        }
+    }
+
     pub fn toggle_pause(&mut self) {
         match self.phase {
             GamePhase::Playing => self.phase = GamePhase::Paused,
             GamePhase::Paused => self.phase = GamePhase::Playing,
-            GamePhase::GameOver => {}
+            _ => {}
         }
     }
 
     pub fn restart(&mut self) {
+        let hs = self.high_score.max(hiscore::load());
         *self = Self::new();
+        self.high_score = hs;
     }
 
     pub fn press_left(&mut self) {
@@ -248,7 +280,6 @@ impl Game {
         if self.phase != GamePhase::Playing {
             return;
         }
-        // Approximate 180: two CW kicks (TETR.IO has dedicated 180 tables).
         if self.try_rotate(true) {
             let _ = self.try_rotate(true);
         }
@@ -274,7 +305,7 @@ impl Game {
                 self.hold = Some(current_kind);
                 self.current = Piece::new(held);
                 if self.board.is_block_out(&self.current) {
-                    self.phase = GamePhase::GameOver;
+                    self.top_out();
                 }
             }
         }
@@ -359,12 +390,11 @@ impl Game {
         if filled < 3 {
             return TSpinKind::None;
         }
-        // Front corners (point of T) for mini vs full
         let (fa, fb) = match self.current.rot {
-            0 => ((cx - 1, cy - 1), (cx + 1, cy - 1)), // pointing up
-            1 => ((cx + 1, cy - 1), (cx + 1, cy + 1)), // right
-            2 => ((cx - 1, cy + 1), (cx + 1, cy + 1)), // down
-            _ => ((cx - 1, cy - 1), (cx - 1, cy + 1)), // left
+            0 => ((cx - 1, cy - 1), (cx + 1, cy - 1)),
+            1 => ((cx + 1, cy - 1), (cx + 1, cy + 1)),
+            2 => ((cx - 1, cy + 1), (cx + 1, cy + 1)),
+            _ => ((cx - 1, cy - 1), (cx - 1, cy + 1)),
         };
         let front = self.board.get(fa.0, fa.1) != Cell::Empty
             && self.board.get(fb.0, fb.1) != Cell::Empty;
@@ -380,14 +410,43 @@ impl Game {
         self.board.lock(&self.current);
         self.pieces_placed += 1;
 
+        let rows = self.board.full_rows();
+        if rows.is_empty() {
+            // Spin with no lines still scores
+            let clear = self.classify_clear(0);
+            self.apply_score(clear, 0);
+            self.last_clear = clear;
+            if clear != ClearType::None {
+                self.clear_flash_ms = 600;
+            }
+            self.finish_lock_cycle();
+        } else {
+            self.pending_tspin = self.last_tspin;
+            self.flashing_rows = rows;
+            self.flash_timer = LINE_CLEAR_FLASH_MS;
+            self.phase = GamePhase::Clearing;
+            self.lock_timer = None;
+            self.lock_resets = 0;
+            self.gravity_accum = 0;
+            self.last_was_rotation = false;
+        }
+    }
+
+    fn finish_clear_animation(&mut self) {
+        let n = self.flashing_rows.len() as u32;
+        self.flashing_rows.clear();
+        self.last_tspin = self.pending_tspin;
         let cleared = self.board.clear_lines();
+        debug_assert_eq!(cleared, n);
         let clear = self.classify_clear(cleared);
         self.apply_score(clear, cleared);
         self.last_clear = clear;
-        if clear != ClearType::None {
-            self.clear_flash_ms = 800;
-        }
+        self.clear_flash_ms = 800;
+        self.phase = GamePhase::Playing;
+        self.finish_lock_cycle();
+    }
 
+    fn finish_lock_cycle(&mut self) {
         self.hold_used = false;
         self.lock_timer = None;
         self.lock_resets = 0;
@@ -423,6 +482,7 @@ impl Game {
                 self.score += base * self.level as u64;
             }
             self.combo = -1;
+            self.touch_high_score();
             return;
         }
 
@@ -462,6 +522,13 @@ impl Game {
 
         self.lines += lines;
         self.level = 1 + self.lines / 10;
+        self.touch_high_score();
+    }
+
+    fn touch_high_score(&mut self) {
+        if self.score > self.high_score {
+            self.high_score = self.score;
+        }
     }
 
     fn spawn_next(&mut self) {
@@ -471,20 +538,34 @@ impl Game {
         self.lock_timer = None;
         self.lock_resets = 0;
         if self.board.is_block_out(&self.current) {
-            self.phase = GamePhase::GameOver;
+            self.top_out();
         }
     }
 
-    pub fn tick(&mut self, dt: u64) {
-        if self.phase != GamePhase::Playing {
-            return;
-        }
+    fn top_out(&mut self) {
+        self.phase = GamePhase::GameOver;
+        self.high_score = hiscore::update_if_better(self.score);
+    }
 
+    pub fn tick(&mut self, dt: u64) {
         if self.clear_flash_ms > 0 {
             self.clear_flash_ms = self.clear_flash_ms.saturating_sub(dt);
         }
 
-        // Age held keys; auto-release without key-up events
+        match self.phase {
+            GamePhase::Ready | GamePhase::Paused | GamePhase::GameOver => return,
+            GamePhase::Clearing => {
+                self.flash_timer = self.flash_timer.saturating_sub(dt);
+                if self.flash_timer == 0 {
+                    self.finish_clear_animation();
+                }
+                return;
+            }
+            GamePhase::Playing => {}
+        }
+
+        self.elapsed_ms = self.elapsed_ms.saturating_add(dt);
+
         if self.left_held {
             self.left_age = self.left_age.saturating_add(dt);
             if self.left_age > KEY_HOLD_TIMEOUT_MS {
@@ -514,7 +595,6 @@ impl Game {
             }
         }
 
-        // DAS / ARR
         if self.das_dir != 0 && (self.left_held || self.right_held) {
             self.das_timer = self.das_timer.saturating_add(dt);
             if self.das_timer >= DAS_MS {
@@ -528,7 +608,6 @@ impl Game {
             }
         }
 
-        // Soft drop or gravity
         if self.soft_dropping {
             self.soft_timer = self.soft_timer.saturating_add(dt);
             while self.soft_timer >= SOFT_DROP_MS {
@@ -548,7 +627,10 @@ impl Game {
             }
         }
 
-        // Lock delay
+        if self.phase != GamePhase::Playing {
+            return;
+        }
+
         if self.is_on_ground() {
             let timer = self.lock_timer.get_or_insert(LOCK_DELAY_MS);
             *timer = timer.saturating_sub(dt);

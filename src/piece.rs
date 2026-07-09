@@ -146,11 +146,12 @@ impl PieceKind {
         pts
     }
 
+    /// Guideline-centered spawn on a 10-wide board (origin x = 4).
+    /// I → cols 3–6, O → 4–5, JLSTZ → 3–5.
     pub fn spawn_pos(self) -> (i32, i32) {
         match self {
-            PieceKind::I => (3, SPAWN_Y),
             PieceKind::O => (4, SPAWN_Y - 1),
-            _ => (3, SPAWN_Y),
+            _ => (4, SPAWN_Y),
         }
     }
 }
@@ -232,8 +233,23 @@ mod tests {
 
     #[test]
     fn t_spawn_points_up() {
-        // stem at y-1
         let c = PieceKind::T.cells(0);
         assert!(c.contains(&(0, -1)));
+    }
+
+    #[test]
+    fn spawn_is_horizontally_centered() {
+        // Board center is 4.5; each piece's cell midpoint should be near it.
+        for kind in PieceKind::ALL {
+            let p = Piece::new(kind);
+            let xs: Vec<i32> = p.cells().iter().map(|c| c.0).collect();
+            let min_x = *xs.iter().min().unwrap();
+            let max_x = *xs.iter().max().unwrap();
+            let mid = (min_x + max_x) as f64 / 2.0;
+            assert!(
+                (mid - 4.5).abs() <= 0.5,
+                "{kind:?} spawn mid={mid}, cells={xs:?}"
+            );
+        }
     }
 }

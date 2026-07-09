@@ -3,7 +3,7 @@
 //! Controls:
 //!   ← →     move
 //!   ↓       soft drop
-//!   Space   hard drop
+//!   Space   hard drop (or start)
 //!   Z       rotate CCW
 //!   X / ↑   rotate CW
 //!   A       180° rotate
@@ -15,6 +15,7 @@
 mod bag;
 mod board;
 mod game;
+mod hiscore;
 mod piece;
 mod render;
 
@@ -47,64 +48,73 @@ fn run_game() -> Result<()> {
     let mut game = Game::new();
     let mut last = Instant::now();
     let frame = Duration::from_millis(16);
-
-    render::draw(&game)?;
+    let mut chrome_dirty = true;
 
     loop {
         while event::poll(Duration::from_millis(0))? {
             let ev = event::read()?;
-            let Event::Key(key) = ev else {
-                continue;
-            };
+            match ev {
+                Event::Resize(_, _) => {
+                    chrome_dirty = true;
+                }
+                Event::Key(key) => {
+                    let is_press =
+                        key.kind == KeyEventKind::Press || key.kind == KeyEventKind::Repeat;
+                    if !is_press {
+                        continue;
+                    }
 
-            let is_press = key.kind == KeyEventKind::Press || key.kind == KeyEventKind::Repeat;
-            if !is_press {
-                continue;
-            }
+                    let discrete = matches!(
+                        key.code,
+                        KeyCode::Char('z')
+                            | KeyCode::Char('Z')
+                            | KeyCode::Char('x')
+                            | KeyCode::Char('X')
+                            | KeyCode::Char('a')
+                            | KeyCode::Char('A')
+                            | KeyCode::Char('c')
+                            | KeyCode::Char('C')
+                            | KeyCode::Char(' ')
+                            | KeyCode::Char('p')
+                            | KeyCode::Char('P')
+                            | KeyCode::Char('r')
+                            | KeyCode::Char('R')
+                            | KeyCode::Char('q')
+                            | KeyCode::Char('Q')
+                            | KeyCode::Esc
+                            | KeyCode::Up
+                            | KeyCode::Enter
+                    );
+                    if discrete && key.kind == KeyEventKind::Repeat {
+                        continue;
+                    }
 
-            // Discrete actions: ignore terminal key-repeat
-            let discrete = matches!(
-                key.code,
-                KeyCode::Char('z')
-                    | KeyCode::Char('Z')
-                    | KeyCode::Char('x')
-                    | KeyCode::Char('X')
-                    | KeyCode::Char('a')
-                    | KeyCode::Char('A')
-                    | KeyCode::Char('c')
-                    | KeyCode::Char('C')
-                    | KeyCode::Char(' ')
-                    | KeyCode::Char('p')
-                    | KeyCode::Char('P')
-                    | KeyCode::Char('r')
-                    | KeyCode::Char('R')
-                    | KeyCode::Char('q')
-                    | KeyCode::Char('Q')
-                    | KeyCode::Esc
-                    | KeyCode::Up
-            );
-            if discrete && key.kind == KeyEventKind::Repeat {
-                continue;
-            }
+                    if key.modifiers.contains(KeyModifiers::CONTROL)
+                        && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
+                    {
+                        return Ok(());
+                    }
 
-            if key.modifiers.contains(KeyModifiers::CONTROL)
-                && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
-            {
-                return Ok(());
-            }
-
-            match key.code {
-                KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => return Ok(()),
-                KeyCode::Char('p') | KeyCode::Char('P') => game.toggle_pause(),
-                KeyCode::Char('r') | KeyCode::Char('R') => game.restart(),
-                KeyCode::Left => game.press_left(),
-                KeyCode::Right => game.press_right(),
-                KeyCode::Down => game.press_soft(),
-                KeyCode::Char(' ') => game.hard_drop(),
-                KeyCode::Up | KeyCode::Char('x') | KeyCode::Char('X') => game.rotate_cw(),
-                KeyCode::Char('z') | KeyCode::Char('Z') => game.rotate_ccw(),
-                KeyCode::Char('a') | KeyCode::Char('A') => game.rotate_180(),
-                KeyCode::Char('c') | KeyCode::Char('C') => game.hold(),
+                    match key.code {
+                        KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => return Ok(()),
+                        KeyCode::Char('p') | KeyCode::Char('P') => game.toggle_pause(),
+                        KeyCode::Char('r') | KeyCode::Char('R') => {
+                            game.restart();
+                            chrome_dirty = true;
+                        }
+                        KeyCode::Enter if game.phase == GamePhase::Ready => game.start(),
+                        KeyCode::Char(' ') if game.phase == GamePhase::Ready => game.start(),
+                        KeyCode::Left => game.press_left(),
+                        KeyCode::Right => game.press_right(),
+                        KeyCode::Down => game.press_soft(),
+                        KeyCode::Char(' ') => game.hard_drop(),
+                        KeyCode::Up | KeyCode::Char('x') | KeyCode::Char('X') => game.rotate_cw(),
+                        KeyCode::Char('z') | KeyCode::Char('Z') => game.rotate_ccw(),
+                        KeyCode::Char('a') | KeyCode::Char('A') => game.rotate_180(),
+                        KeyCode::Char('c') | KeyCode::Char('C') => game.hold(),
+                        _ => {}
+                    }
+                }
                 _ => {}
             }
         }
@@ -113,11 +123,13 @@ fn run_game() -> Result<()> {
         let dt = now.duration_since(last).as_millis() as u64;
         if dt >= 1 {
             last = now;
-            if game.phase == GamePhase::Playing {
-                game.tick(dt.min(100));
-            }
+            game.tick(dt.min(100));
         }
 
+        if chrome_dirty {
+            render::draw_chrome()?;
+            chrome_dirty = false;
+        }
         render::draw(&game)?;
         std::thread::sleep(frame);
     }

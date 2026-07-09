@@ -12,6 +12,10 @@ use crossterm::{
 use std::io::{stdout, Write};
 
 const CELL_W: i32 = 2;
+const VISIBLE_START: i32 = 20;
+
+const BOARD_X: u16 = 16;
+const BOARD_Y: u16 = 2;
 
 fn cell_block(color: Color) -> String {
     format!(
@@ -57,6 +61,15 @@ fn ghost_block(color: Color) -> String {
     )
 }
 
+fn flash_block() -> String {
+    let c = Color::Rgb {
+        r: 0xff,
+        g: 0xff,
+        b: 0xff,
+    };
+    cell_block(c)
+}
+
 fn draw_mini(kind: PieceKind, ox: u16, oy: u16) -> std::io::Result<()> {
     let mut out = stdout();
     for row in 0..3u16 {
@@ -80,17 +93,17 @@ fn draw_mini(kind: PieceKind, ox: u16, oy: u16) -> std::io::Result<()> {
     Ok(())
 }
 
-pub fn draw(game: &Game) -> std::io::Result<()> {
+/// Full layout (static chrome). Call on first frame and after resize.
+pub fn draw_chrome() -> std::io::Result<()> {
     let mut out = stdout();
     queue!(out, Clear(TermClear::All))?;
 
-    let board_x: u16 = 16;
-    let board_y: u16 = 2;
-    let visible_start = 20i32;
+    let bw = (BOARD_W * CELL_W) as u16;
+    let bh = VISIBLE_H as u16;
 
     queue!(
         out,
-        MoveTo(board_x, 0),
+        MoveTo(BOARD_X, 0),
         SetForegroundColor(Color::Rgb {
             r: 0x00,
             g: 0xe5,
@@ -103,15 +116,50 @@ pub fn draw(game: &Game) -> std::io::Result<()> {
         ResetColor
     )?;
 
-    // HOLD
     queue!(
         out,
-        MoveTo(2, board_y),
+        MoveTo(2, BOARD_Y),
         SetForegroundColor(Color::White),
         Print("HOLD"),
         ResetColor
     )?;
-    draw_box(2, board_y + 1, 10, 6)?;
+    draw_box(2, BOARD_Y + 1, 10, 6)?;
+
+    draw_box(BOARD_X - 1, BOARD_Y, bw + 2, bh + 2)?;
+
+    let next_x = BOARD_X + bw + 3;
+    queue!(
+        out,
+        MoveTo(next_x, BOARD_Y),
+        SetForegroundColor(Color::White),
+        Print("NEXT"),
+        ResetColor
+    )?;
+    draw_box(next_x, BOARD_Y + 1, 10, 18)?;
+
+    let foot_y = BOARD_Y + bh + 3;
+    queue!(
+        out,
+        MoveTo(2, foot_y),
+        SetForegroundColor(Color::DarkGrey),
+        Print("←→ move  ↓ soft  Space hard  Z/X/↑ rot  C hold  A 180  P pause  R restart  Q quit"),
+        ResetColor
+    )?;
+
+    out.flush()?;
+    Ok(())
+}
+
+/// Redraw dynamic regions only (board, hold, next, stats, overlays).
+pub fn draw(game: &Game) -> std::io::Result<()> {
+    let mut out = stdout();
+    let bw = (BOARD_W * CELL_W) as u16;
+    let bh = VISIBLE_H as u16;
+
+    // HOLD box interior
+    for row in 0..4u16 {
+        queue!(out, MoveTo(3, BOARD_Y + 2 + row), Print("        "))?;
+    }
     if let Some(h) = game.hold {
         let color = if game.hold_used {
             Color::DarkGrey
@@ -129,15 +177,13 @@ pub fn draw(game: &Game) -> std::io::Result<()> {
         let off_y = (2 - hh) / 2;
         for (x, y) in cells {
             let px = 4 + ((x - min_x + off_x) * CELL_W) as u16;
-            let py = board_y + 2 + (y - min_y + off_y) as u16;
+            let py = BOARD_Y + 2 + (y - min_y + off_y) as u16;
             queue!(out, MoveTo(px, py), Print(cell_block(color)))?;
         }
     }
 
-    let bw = (BOARD_W * CELL_W) as u16;
-    let bh = VISIBLE_H as u16;
-    draw_box(board_x - 1, board_y, bw + 2, bh + 2)?;
-
+    // Board
+    let show_active = matches!(game.phase, GamePhase::Playing | GamePhase::Paused);
     let ghost_y = game.ghost_y();
     let mut ghost = game.current;
     ghost.y = ghost_y;
@@ -145,16 +191,24 @@ pub fn draw(game: &Game) -> std::io::Result<()> {
     let ghost_cells = ghost.cells();
 
     for row in 0..VISIBLE_H {
-        let by = visible_start + row;
-        queue!(out, MoveTo(board_x, board_y + 1 + row as u16))?;
+        let by = VISIBLE_START + row;
+        let row_flash = game.flashing_rows.contains(&by);
+        queue!(out, MoveTo(BOARD_X, BOARD_Y + 1 + row as u16))?;
         for col in 0..BOARD_W {
             let checker = (row + col) % 2 == 0;
-            let is_active = active_cells.iter().any(|&(x, y)| x == col && y == by);
-            let is_ghost = ghost_cells.iter().any(|&(x, y)| x == col && y == by);
+            if row_flash {
+                queue!(out, Print(flash_block()))?;
+                continue;
+            }
+            let is_active =
+                show_active && active_cells.iter().any(|&(x, y)| x == col && y == by);
+            let is_ghost = show_active
+                && game.phase == GamePhase::Playing
+                && ghost_cells.iter().any(|&(x, y)| x == col && y == by);
 
             if is_active {
                 queue!(out, Print(cell_block(game.current.kind.color())))?;
-            } else if is_ghost && game.phase == GamePhase::Playing {
+            } else if is_ghost {
                 queue!(out, Print(ghost_block(game.current.kind.ghost_color())))?;
             } else {
                 match game.board.get(col, by) {
@@ -166,46 +220,47 @@ pub fn draw(game: &Game) -> std::io::Result<()> {
     }
 
     // NEXT
-    let next_x = board_x + bw + 3;
-    queue!(
-        out,
-        MoveTo(next_x, board_y),
-        SetForegroundColor(Color::White),
-        Print("NEXT"),
-        ResetColor
-    )?;
-    draw_box(next_x, board_y + 1, 10, 18)?;
+    let next_x = BOARD_X + bw + 3;
     for (i, kind) in game.next_queue().into_iter().enumerate() {
-        draw_mini(kind, next_x + 1, board_y + 2 + (i as u16) * 3)?;
+        draw_mini(kind, next_x + 1, BOARD_Y + 2 + (i as u16) * 3)?;
     }
 
-    // Stats
-    let stats_y = board_y + 9;
-    for (label, value, row) in [
-        ("SCORE", format!("{}", game.score), 0u16),
-        ("LINES", format!("{}", game.lines), 3),
-        ("LEVEL", format!("{}", game.level), 6),
-    ] {
+    // Stats (left column under hold)
+    let stats_y = BOARD_Y + 9;
+    let stats: [(&str, String); 6] = [
+        ("SCORE", format!("{}", game.score)),
+        ("HIGH", format!("{}", game.high_score)),
+        ("LINES", format!("{}", game.lines)),
+        ("LEVEL", format!("{}", game.level)),
+        ("TIME", game.time_label()),
+        ("PPS", format!("{:.2}", game.pps())),
+    ];
+    for (i, (label, value)) in stats.iter().enumerate() {
+        let row = (i as u16) * 2;
         queue!(
             out,
             MoveTo(2, stats_y + row),
             SetForegroundColor(Color::DarkGrey),
-            Print(label),
-            ResetColor
-        )?;
-        queue!(
-            out,
-            MoveTo(2, stats_y + row + 1),
+            Print(format!("{:<5}", label)),
+            ResetColor,
             SetForegroundColor(Color::White),
-            Print(format!("{:>10}", value)),
+            Print(format!("{:>8}", value)),
             ResetColor
         )?;
     }
 
+    // Clear combo labels area then rewrite
+    queue!(
+        out,
+        MoveTo(2, stats_y + 13),
+        Print("              "),
+        MoveTo(2, stats_y + 14),
+        Print("              ")
+    )?;
     if game.combo > 0 {
         queue!(
             out,
-            MoveTo(2, stats_y + 9),
+            MoveTo(2, stats_y + 13),
             SetForegroundColor(Color::Rgb {
                 r: 0xff,
                 g: 0xcc,
@@ -218,7 +273,7 @@ pub fn draw(game: &Game) -> std::io::Result<()> {
     if game.b2b > 0 {
         queue!(
             out,
-            MoveTo(2, stats_y + 10),
+            MoveTo(2, stats_y + 14),
             SetForegroundColor(Color::Rgb {
                 r: 0xff,
                 g: 0x66,
@@ -229,12 +284,13 @@ pub fn draw(game: &Game) -> std::io::Result<()> {
         )?;
     }
 
+    // Clear-type banner
     if game.clear_flash_ms > 0 && game.last_clear != ClearType::None {
         let label = game.last_clear.label();
-        let cx = board_x + bw / 2 - (label.len() as u16) / 2;
+        let cx = BOARD_X + bw / 2 - (label.len() as u16) / 2;
         queue!(
             out,
-            MoveTo(cx, board_y + bh / 2),
+            MoveTo(cx, BOARD_Y + bh / 2),
             SetForegroundColor(Color::Rgb {
                 r: 0xff,
                 g: 0xff,
@@ -245,56 +301,53 @@ pub fn draw(game: &Game) -> std::io::Result<()> {
         )?;
     }
 
+    // Overlays
     match game.phase {
-        GamePhase::Paused => {
-            center_msg(board_x, board_y, bw, bh, "PAUSED", Color::Yellow)?;
+        GamePhase::Ready => {
+            center_msg(bw, bh, 0, "cli-tetris", Color::Rgb {
+                r: 0x00,
+                g: 0xe5,
+                b: 0xa8,
+            })?;
+            center_msg(bw, bh, 2, "Press SPACE to start", Color::White)?;
             center_msg(
-                board_x,
-                board_y + 2,
                 bw,
                 bh,
-                "P to resume",
+                4,
+                &format!("High score: {}", game.high_score),
                 Color::DarkGrey,
             )?;
+        }
+        GamePhase::Paused => {
+            center_msg(bw, bh, 0, "PAUSED", Color::Yellow)?;
+            center_msg(bw, bh, 2, "P to resume", Color::DarkGrey)?;
         }
         GamePhase::GameOver => {
-            center_msg(board_x, board_y, bw, bh, "TOP OUT", Color::Red)?;
-            center_msg(
-                board_x,
-                board_y + 2,
-                bw,
-                bh,
-                "R restart · Q quit",
-                Color::DarkGrey,
-            )?;
+            center_msg(bw, bh, 0, "TOP OUT", Color::Red)?;
+            center_msg(bw, bh, 2, &format!("Score {}", game.score), Color::White)?;
+            let hs_msg = if game.score >= game.high_score && game.score > 0 {
+                "NEW HIGH SCORE!".to_string()
+            } else {
+                format!("Best {}", game.high_score)
+            };
+            center_msg(bw, bh, 3, &hs_msg, Color::Rgb {
+                r: 0xff,
+                g: 0xcc,
+                b: 0x00,
+            })?;
+            center_msg(bw, bh, 5, "R restart · Q quit", Color::DarkGrey)?;
         }
-        GamePhase::Playing => {}
+        GamePhase::Playing | GamePhase::Clearing => {}
     }
-
-    let foot_y = board_y + bh + 3;
-    queue!(
-        out,
-        MoveTo(2, foot_y),
-        SetForegroundColor(Color::DarkGrey),
-        Print("←→ move  ↓ soft  Space hard  Z/X/↑ rot  C hold  A 180  P pause  R restart  Q quit"),
-        ResetColor
-    )?;
 
     out.flush()?;
     Ok(())
 }
 
-fn center_msg(
-    board_x: u16,
-    board_y: u16,
-    bw: u16,
-    bh: u16,
-    msg: &str,
-    color: Color,
-) -> std::io::Result<()> {
+fn center_msg(bw: u16, bh: u16, row_off: u16, msg: &str, color: Color) -> std::io::Result<()> {
     let mut out = stdout();
-    let cx = board_x + bw / 2 - (msg.len() as u16) / 2;
-    let cy = board_y + bh / 2;
+    let cx = BOARD_X + bw / 2 - (msg.len() as u16) / 2;
+    let cy = BOARD_Y + bh / 2 - 2 + row_off;
     queue!(
         out,
         MoveTo(cx, cy),

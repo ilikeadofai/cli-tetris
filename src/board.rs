@@ -52,7 +52,18 @@ impl Board {
         }
     }
 
-    /// Clear full lines. Returns number of lines cleared and which rows (from top).
+    /// Row indices (top→bottom) that are completely filled.
+    pub fn full_rows(&self) -> Vec<i32> {
+        let mut rows = Vec::new();
+        for y in 0..BOARD_H {
+            if (0..BOARD_W).all(|x| self.get(x, y) != Cell::Empty) {
+                rows.push(y);
+            }
+        }
+        rows
+    }
+
+    /// Clear full lines. Returns number of lines cleared.
     pub fn clear_lines(&mut self) -> u32 {
         let mut write_y = BOARD_H - 1;
         let mut cleared = 0u32;
@@ -72,7 +83,6 @@ impl Board {
             write_y -= 1;
         }
 
-        // Fill emptied top rows
         while write_y >= 0 {
             for x in 0..BOARD_W {
                 self.set(x, write_y, Cell::Empty);
