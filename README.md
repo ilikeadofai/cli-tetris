@@ -45,7 +45,7 @@ Needs a truecolor-capable terminal for most themes; **Terminal (ANSI)** follows 
 | Tab | Options |
 |-----|---------|
 | **Handling** | DAS, ARR, SDF (soft-drop ms/cell) |
-| **Video** | Scale (Auto/1x/2x/3x), ghost, next count, grid, center board |
+| **Video** | Scale (Auto / Compact–Huge, width-only so minos stay square), ghost, next, grid, center |
 | **Colors** | Theme presets + live swatch preview |
 
 Config file: `~/.cli-tetris-config`  

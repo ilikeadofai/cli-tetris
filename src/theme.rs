@@ -269,6 +269,33 @@ impl Theme {
             _ => rgb(0xff, 0x66, 0xaa),
         }
     }
+
+    /// Panel / modal background.
+    pub fn panel(self) -> Color {
+        match self.id {
+            ThemeId::Terminal => Color::Black,
+            ThemeId::Guideline => rgb(0x0e, 0x0e, 0x18),
+            ThemeId::Catppuccin => rgb(0x11, 0x11, 0x1b),
+            ThemeId::Dracula => rgb(0x14, 0x15, 0x1a),
+            ThemeId::Nord => rgb(0x2e, 0x34, 0x40),
+            ThemeId::Gruvbox => rgb(0x1d, 0x20, 0x21),
+            ThemeId::Monochrome => rgb(0x0c, 0x0c, 0x0c),
+        }
+    }
+
+    /// Selected menu row background.
+    pub fn select_bg(self) -> Color {
+        match self.id {
+            ThemeId::Terminal => Color::DarkBlue,
+            ThemeId::Guideline => rgb(0x2a, 0x2a, 0x48),
+            ThemeId::Catppuccin => rgb(0x31, 0x32, 0x44),
+            ThemeId::Dracula => rgb(0x44, 0x47, 0x5a),
+            ThemeId::Nord => rgb(0x43, 0x4c, 0x5e),
+            ThemeId::Gruvbox => rgb(0x3c, 0x38, 0x36),
+            ThemeId::Monochrome => rgb(0x2a, 0x2a, 0x2a),
+        }
+    }
+
 }
 
 fn rgb(r: u8, g: u8, b: u8) -> Color {

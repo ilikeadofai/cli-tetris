@@ -1,4 +1,4 @@
-//! Terminal rendering: dynamic layout, themes, title + settings menus.
+//! Terminal rendering: square minos, polished panels, title/settings UI.
 
 use crate::board::Cell;
 use crate::game::{ClearType, Game, GamePhase};
@@ -17,80 +17,138 @@ use std::io::{stdout, Write};
 
 const VISIBLE_START: i32 = 20;
 
-fn cell_fill(color: Color, cell_w: u16, cell_h: u16) -> Vec<String> {
-    let ch = match cell_w {
-        1 => "█".to_string(),
-        2 => "██".to_string(),
-        _ => "████".to_string(),
-    };
-    let line = format!(
-        "{}{}{}{}",
-        SetBackgroundColor(color),
-        SetForegroundColor(color),
-        ch,
-        ResetColor
-    );
-    vec![line; cell_h as usize]
+// ── glyphs ──────────────────────────────────────────────────────────
+
+/// Near-square mino: width scales, always 1 row (no vertical stretch).
+fn mino_str(cell_w: u16, kind: MinoStyle) -> String {
+    match (cell_w, kind) {
+        (1, MinoStyle::Solid) => "█".into(),
+        (1, MinoStyle::Ghost) => "░".into(),
+        (1, MinoStyle::Empty) => " ".into(),
+        (1, MinoStyle::Dot) => "·".into(),
+        (2, MinoStyle::Solid) => "██".into(),
+        (2, MinoStyle::Ghost) => "░░".into(),
+        (2, MinoStyle::Empty) => "  ".into(),
+        (2, MinoStyle::Dot) => "··".into(),
+        (3, MinoStyle::Solid) => "███".into(),
+        (3, MinoStyle::Ghost) => "░░░".into(),
+        (3, MinoStyle::Empty) => "   ".into(),
+        (3, MinoStyle::Dot) => "···".into(),
+        (_, MinoStyle::Solid) => "████".into(),
+        (_, MinoStyle::Ghost) => "░░░░".into(),
+        (_, MinoStyle::Empty) => "    ".into(),
+        (_, MinoStyle::Dot) => "····".into(),
+    }
 }
 
-fn empty_fill(theme: Theme, checker: bool, grid: GridStyle, cell_w: u16, cell_h: u16) -> Vec<String> {
-    let bg = match grid {
-        GridStyle::Off => theme.grid_b(),
-        GridStyle::Flat => theme.grid_b(),
+#[derive(Clone, Copy)]
+enum MinoStyle {
+    Solid,
+    Ghost,
+    Empty,
+    Dot,
+}
+
+fn paint_bg(fg: Color, bg: Color, text: &str) -> String {
+    format!(
+        "{}{}{}{}",
+        SetForegroundColor(fg),
+        SetBackgroundColor(bg),
+        text,
+        ResetColor
+    )
+}
+
+fn solid_cell(color: Color, cell_w: u16) -> String {
+    // Bevel: first col slightly brighter when wide enough
+    if cell_w >= 2 {
+        let hi = match color {
+            Color::Rgb { r, g, b } => Color::Rgb {
+                r: r.saturating_add(36).min(255),
+                g: g.saturating_add(36).min(255),
+                b: b.saturating_add(36).min(255),
+            },
+            other => other,
+        };
+        let rest = "█".repeat((cell_w - 1) as usize);
+        format!(
+            "{}{}█{}{}{}{}",
+            SetForegroundColor(hi),
+            SetBackgroundColor(color),
+            SetForegroundColor(color),
+            rest,
+            ResetColor,
+            ""
+        )
+    } else {
+        paint_bg(color, color, &mino_str(cell_w, MinoStyle::Solid))
+    }
+}
+
+fn empty_cell(theme: Theme, checker: bool, grid: GridStyle, cell_w: u16) -> String {
+    match grid {
+        GridStyle::Off => paint_bg(theme.grid_b(), theme.grid_b(), &mino_str(cell_w, MinoStyle::Empty)),
+        GridStyle::Flat => paint_bg(theme.grid_b(), theme.grid_b(), &mino_str(cell_w, MinoStyle::Empty)),
         GridStyle::Checker => {
-            if checker {
+            let bg = if checker {
                 theme.grid_a()
             } else {
                 theme.grid_b()
+            };
+            // Subtle dot on checker A cells for depth without noise
+            if checker && cell_w >= 2 {
+                paint_bg(theme.border(), bg, &mino_str(cell_w, MinoStyle::Dot))
+            } else {
+                paint_bg(bg, bg, &mino_str(cell_w, MinoStyle::Empty))
             }
         }
-    };
-    let ch = match cell_w {
-        1 => " ".to_string(),
-        2 => "  ".to_string(),
-        _ => "    ".to_string(),
-    };
-    // For Off grid still need spaces; Flat same color both
-    let line = format!(
-        "{}{}{}{}",
-        SetBackgroundColor(bg),
-        SetForegroundColor(bg),
-        ch,
-        ResetColor
-    );
-    vec![line; cell_h as usize]
+    }
 }
 
-fn ghost_fill(color: Color, cell_w: u16, cell_h: u16, theme: Theme) -> Vec<String> {
-    let ch = match cell_w {
-        1 => "░".to_string(),
-        2 => "░░".to_string(),
-        _ => "░░░░".to_string(),
-    };
-    let line = format!(
-        "{}{}{}{}",
-        SetForegroundColor(color),
-        SetBackgroundColor(theme.grid_b()),
-        ch,
-        ResetColor
-    );
-    vec![line; cell_h as usize]
+fn ghost_cell(color: Color, theme: Theme, cell_w: u16) -> String {
+    paint_bg(color, theme.grid_b(), &mino_str(cell_w, MinoStyle::Ghost))
 }
 
-fn draw_box(
-    x: u16,
-    y: u16,
-    w: u16,
-    h: u16,
-    border: Color,
-) -> std::io::Result<()> {
+// ── boxes / panels ──────────────────────────────────────────────────
+
+fn fill_rect(x: u16, y: u16, w: u16, h: u16, bg: Color) -> std::io::Result<()> {
     let mut out = stdout();
+    let blank = " ".repeat(w as usize);
+    for row in 0..h {
+        queue!(
+            out,
+            MoveTo(x, y + row),
+            SetBackgroundColor(bg),
+            Print(&blank),
+            ResetColor
+        )?;
+    }
+    Ok(())
+}
+
+fn draw_box(x: u16, y: u16, w: u16, h: u16, border: Color, fill: Option<Color>) -> std::io::Result<()> {
+    let mut out = stdout();
+    if let Some(bg) = fill {
+        for row in 1..h.saturating_sub(1) {
+            let inner = " ".repeat(w.saturating_sub(2) as usize);
+            queue!(
+                out,
+                MoveTo(x + 1, y + row),
+                SetBackgroundColor(bg),
+                Print(inner),
+                ResetColor
+            )?;
+        }
+    }
     queue!(out, SetForegroundColor(border))?;
-    queue!(out, MoveTo(x, y), Print("┌"))?;
+    if let Some(bg) = fill {
+        queue!(out, SetBackgroundColor(bg))?;
+    }
+    queue!(out, MoveTo(x, y), Print("╭"))?;
     for _ in 0..w.saturating_sub(2) {
         queue!(out, Print("─"))?;
     }
-    queue!(out, Print("┐"))?;
+    queue!(out, Print("╮"))?;
     for row in 1..h.saturating_sub(1) {
         queue!(out, MoveTo(x, y + row), Print("│"))?;
         queue!(
@@ -99,11 +157,24 @@ fn draw_box(
             Print("│")
         )?;
     }
-    queue!(out, MoveTo(x, y + h.saturating_sub(1)), Print("└"))?;
+    queue!(out, MoveTo(x, y + h.saturating_sub(1)), Print("╰"))?;
     for _ in 0..w.saturating_sub(2) {
         queue!(out, Print("─"))?;
     }
-    queue!(out, Print("┘"), ResetColor)?;
+    queue!(out, Print("╯"), ResetColor)?;
+    Ok(())
+}
+
+fn label_chip(x: u16, y: u16, text: &str, theme: Theme) -> std::io::Result<()> {
+    let mut out = stdout();
+    queue!(
+        out,
+        MoveTo(x, y),
+        SetForegroundColor(theme.panel()),
+        SetBackgroundColor(theme.accent()),
+        Print(format!(" {} ", text)),
+        ResetColor
+    )?;
     Ok(())
 }
 
@@ -116,7 +187,13 @@ fn draw_mini_piece(
 ) -> std::io::Result<()> {
     let mut out = stdout();
     for row in 0..3u16 {
-        queue!(out, MoveTo(ox, oy + row), Print("        "))?;
+        queue!(
+            out,
+            MoveTo(ox, oy + row),
+            SetBackgroundColor(theme.panel()),
+            Print("        "),
+            ResetColor
+        )?;
     }
     let cells = kind.cells(0);
     let min_x = cells.iter().map(|c| c.0).min().unwrap_or(0);
@@ -126,7 +203,7 @@ fn draw_mini_piece(
     let w = max_x - min_x + 1;
     let h = max_y - min_y + 1;
     let off_x = (4 - w) / 2;
-    let off_y = (2 - h) / 2;
+    let off_y = (2 - h).max(0) / 2;
     let color = if dimmed {
         theme.muted()
     } else {
@@ -135,8 +212,7 @@ fn draw_mini_piece(
     for (x, y) in cells {
         let px = ox + ((x - min_x + off_x) * 2) as u16;
         let py = oy + (y - min_y + off_y) as u16;
-        let fill = cell_fill(color, 2, 1);
-        queue!(out, MoveTo(px, py), Print(&fill[0]))?;
+        queue!(out, MoveTo(px, py), Print(solid_cell(color, 2)))?;
     }
     Ok(())
 }
@@ -159,7 +235,7 @@ pub fn draw(
         AppScreen::Settings => draw_settings(settings, menu, theme, layout),
         AppScreen::Title => {
             draw_game_frame(game, settings, layout, theme, false)?;
-            draw_title_overlay(game, menu, theme, layout)
+            draw_title_modal(game, menu, theme, layout)
         }
         AppScreen::Playing => draw_game_frame(game, settings, layout, theme, true),
     }
@@ -174,40 +250,28 @@ fn draw_game_frame(
 ) -> std::io::Result<()> {
     let mut out = stdout();
     let l = layout;
+    let cw = l.cell_w;
 
-    // Title bar
+    // Header
     queue!(
         out,
-        MoveTo(l.board_x, l.board_y.saturating_sub(2)),
+        MoveTo(l.title_x, l.board_y.saturating_sub(1)),
         SetForegroundColor(theme.accent()),
-        Print("cli-tetris"),
+        Print("◆ cli-tetris"),
         ResetColor,
         SetForegroundColor(theme.muted()),
-        Print("  ·  TETR.IO-style"),
+        Print(format!("  ·  {}col", cw)),
         ResetColor
     )?;
 
-    // HOLD
-    queue!(
-        out,
-        MoveTo(l.hold_x, l.hold_y),
-        SetForegroundColor(theme.text()),
-        Print("HOLD"),
-        ResetColor
-    )?;
-    draw_box(l.hold_x, l.hold_y + 1, 10, 6, theme.border())?;
-    for row in 0..4u16 {
-        queue!(
-            out,
-            MoveTo(l.hold_x + 1, l.hold_y + 2 + row),
-            Print("        ")
-        )?;
-    }
+    // ── HOLD panel ──
+    draw_box(l.hold_x, l.hold_y, 12, 6, theme.border(), Some(theme.panel()))?;
+    label_chip(l.hold_x + 1, l.hold_y, "HOLD", theme)?;
     if let Some(h) = game.hold {
-        draw_mini_piece(h, l.hold_x + 1, l.hold_y + 2, theme, game.hold_used)?;
+        draw_mini_piece(h, l.hold_x + 2, l.hold_y + 2, theme, game.hold_used)?;
     }
 
-    // Board border
+    // ── Board ──
     let box_w = l.board_pixel_w + 2;
     let box_h = l.board_pixel_h + 2;
     draw_box(
@@ -216,9 +280,9 @@ fn draw_game_frame(
         box_w,
         box_h,
         theme.border(),
+        None,
     )?;
 
-    // Always draw stack; active piece only when playing / paused
     let show_piece = matches!(game.phase, GamePhase::Playing | GamePhase::Paused);
     let ghost_y = game.ghost_y();
     let mut ghost = game.current;
@@ -229,148 +293,172 @@ fn draw_game_frame(
     for row in 0..VISIBLE_H {
         let by = VISIBLE_START + row;
         let row_flash = game.flashing_rows.contains(&by);
-        for sub in 0..l.cell_h {
-            let py = l.board_y + 1 + (row as u16) * l.cell_h + sub;
-            queue!(out, MoveTo(l.board_x, py))?;
-            for col in 0..BOARD_W {
-                let checker = (row + col) % 2 == 0;
-                let lines = if row_flash {
-                    cell_fill(theme.flash(), l.cell_w, 1)
+        let py = l.board_y + 1 + row as u16;
+        queue!(out, MoveTo(l.board_x, py))?;
+        for col in 0..BOARD_W {
+            let checker = (row + col) % 2 == 0;
+            let cell = if row_flash {
+                solid_cell(theme.flash(), cw)
+            } else {
+                let is_active =
+                    show_piece && active_cells.iter().any(|&(x, y)| x == col && y == by);
+                let is_ghost = show_piece
+                    && settings.ghost
+                    && game.phase == GamePhase::Playing
+                    && ghost_cells.iter().any(|&(x, y)| x == col && y == by);
+                if is_active {
+                    solid_cell(theme.piece(game.current.kind), cw)
+                } else if is_ghost {
+                    ghost_cell(theme.ghost(game.current.kind), theme, cw)
                 } else {
-                    let is_active = show_piece
-                        && active_cells.iter().any(|&(x, y)| x == col && y == by);
-                    let is_ghost = show_piece
-                        && settings.ghost
-                        && game.phase == GamePhase::Playing
-                        && ghost_cells.iter().any(|&(x, y)| x == col && y == by);
-                    if is_active {
-                        cell_fill(theme.piece(game.current.kind), l.cell_w, 1)
-                    } else if is_ghost {
-                        ghost_fill(theme.ghost(game.current.kind), l.cell_w, 1, theme)
-                    } else {
-                        match game.board.get(col, by) {
-                            Cell::Empty => {
-                                empty_fill(theme, checker, settings.grid, l.cell_w, 1)
-                            }
-                            Cell::Filled(k) => cell_fill(theme.piece(k), l.cell_w, 1),
-                        }
+                    match game.board.get(col, by) {
+                        Cell::Empty => empty_cell(theme, checker, settings.grid, cw),
+                        Cell::Filled(k) => solid_cell(theme.piece(k), cw),
                     }
-                };
-                queue!(out, Print(&lines[0]))?;
-            }
+                }
+            };
+            queue!(out, Print(cell))?;
         }
     }
-    // NEXT
-    queue!(
-        out,
-        MoveTo(l.next_x, l.next_y),
-        SetForegroundColor(theme.text()),
-        Print("NEXT"),
-        ResetColor
+
+    // ── NEXT panel ──
+    let next_inner = (settings.next_count as u16).max(1) * 3;
+    let next_h = next_inner + 2;
+    draw_box(
+        l.next_x,
+        l.next_y,
+        12,
+        next_h,
+        theme.border(),
+        Some(theme.panel()),
     )?;
-    let next_box_h = 2 + (settings.next_count as u16).max(1) * 3;
-    draw_box(l.next_x, l.next_y + 1, 10, next_box_h, theme.border())?;
+    label_chip(l.next_x + 1, l.next_y, "NEXT", theme)?;
     for (i, kind) in game.next_queue().into_iter().enumerate() {
         draw_mini_piece(
             kind,
-            l.next_x + 1,
-            l.next_y + 2 + (i as u16) * 3,
+            l.next_x + 2,
+            l.next_y + 1 + (i as u16) * 3,
             theme,
             false,
         )?;
     }
 
-    // Stats
+    // ── Stats card under hold ──
+    let stats_h = 14u16;
+    draw_box(
+        l.stats_x,
+        l.stats_y,
+        12,
+        stats_h,
+        theme.border(),
+        Some(theme.panel()),
+    )?;
+    label_chip(l.stats_x + 1, l.stats_y, "STATS", theme)?;
+
     let stats: [(&str, String); 6] = [
-        ("SCORE", format!("{}", game.score)),
-        ("HIGH", format!("{}", game.high_score)),
-        ("LINES", format!("{}", game.lines)),
-        ("LEVEL", format!("{}", game.level)),
-        ("TIME", game.time_label()),
-        ("PPS", format!("{:.2}", game.pps())),
+        ("score", format!("{}", game.score)),
+        ("best", format!("{}", game.high_score)),
+        ("lines", format!("{}", game.lines)),
+        ("level", format!("{}", game.level)),
+        ("time", game.time_label()),
+        ("pps", format!("{:.2}", game.pps())),
     ];
     for (i, (label, value)) in stats.iter().enumerate() {
-        let row = (i as u16) * 2;
+        let row = l.stats_y + 2 + i as u16;
         queue!(
             out,
-            MoveTo(l.stats_x, l.stats_y + row),
+            MoveTo(l.stats_x + 1, row),
+            SetBackgroundColor(theme.panel()),
             SetForegroundColor(theme.muted()),
             Print(format!("{:<5}", label)),
-            ResetColor,
             SetForegroundColor(theme.text()),
-            Print(format!("{:>8}", value)),
+            Print(format!("{:>5}", value)),
             ResetColor
         )?;
     }
 
-    let combo_y = l.stats_y + 13;
+    // Combo / B2B badges
+    let badge_y = l.stats_y + stats_h.saturating_sub(2);
     queue!(
         out,
-        MoveTo(l.stats_x, combo_y),
-        Print("              "),
-        MoveTo(l.stats_x, combo_y + 1),
-        Print("              ")
+        MoveTo(l.stats_x + 1, badge_y),
+        SetBackgroundColor(theme.panel()),
+        Print("          "),
+        ResetColor
     )?;
     if game.combo > 0 {
         queue!(
             out,
-            MoveTo(l.stats_x, combo_y),
+            MoveTo(l.stats_x + 1, badge_y),
+            SetBackgroundColor(theme.panel()),
             SetForegroundColor(theme.combo()),
-            Print(format!("COMBO x{}", game.combo)),
+            Print(format!("combo×{}", game.combo)),
             ResetColor
         )?;
     }
     if game.b2b > 0 {
         queue!(
             out,
-            MoveTo(l.stats_x, combo_y + 1),
+            MoveTo(l.stats_x + 1, badge_y + 1),
+            SetBackgroundColor(theme.panel()),
             SetForegroundColor(theme.b2b()),
-            Print(format!("B2B x{}", game.b2b)),
+            Print(format!("b2b×{}", game.b2b)),
             ResetColor
         )?;
     }
 
+    // Clear-type banner
     if game.clear_flash_ms > 0 && game.last_clear != ClearType::None {
         let label = game.last_clear.label();
-        let cx = l.board_x + l.board_pixel_w / 2 - (label.len() as u16) / 2;
-        let cy = l.board_y + l.board_pixel_h / 2;
-        queue!(
-            out,
-            MoveTo(cx, cy),
-            SetForegroundColor(theme.highlight()),
-            Print(label),
-            ResetColor
-        )?;
+        center_on_board(l, 0, label, theme.highlight())?;
     }
 
     if show_overlays {
         match game.phase {
             GamePhase::Paused => {
-                center_on_board(l, 0, "PAUSED", theme.warn())?;
-                center_on_board(l, 2, "P resume · S settings", theme.muted())?;
+                draw_modal_card(
+                    l,
+                    theme,
+                    &[
+                        ("PAUSED", theme.warn()),
+                        ("", theme.muted()),
+                        ("P  resume", theme.text()),
+                        ("S  settings", theme.text()),
+                    ],
+                )?;
             }
             GamePhase::GameOver => {
-                center_on_board(l, 0, "TOP OUT", theme.danger())?;
-                center_on_board(l, 2, &format!("Score {}", game.score), theme.text())?;
                 let hs = if game.score >= game.high_score && game.score > 0 {
-                    "NEW HIGH SCORE!".to_string()
+                    "★ NEW HIGH SCORE".to_string()
                 } else {
-                    format!("Best {}", game.high_score)
+                    String::new()
                 };
-                center_on_board(l, 3, &hs, theme.combo())?;
-                center_on_board(l, 5, "R restart · Q quit", theme.muted())?;
+                draw_modal_card_owned(
+                    l,
+                    theme,
+                    vec![
+                        ("TOP OUT".into(), theme.danger()),
+                        (String::new(), theme.muted()),
+                        (format!("score  {}", game.score), theme.text()),
+                        (format!("best   {}", game.high_score), theme.muted()),
+                        (hs, theme.combo()),
+                        (String::new(), theme.muted()),
+                        ("R restart · Q title".into(), theme.muted()),
+                    ],
+                )?;
             }
             _ => {}
         }
     }
 
     // Footer
-    let foot_y = l.board_y + l.board_pixel_h + 3;
     queue!(
         out,
-        MoveTo(l.hold_x.min(2), foot_y),
+        MoveTo(0, l.foot_y),
         SetForegroundColor(theme.muted()),
-        Print("←→ move  ↓ soft  Space hard  Z/X rot  C hold  P pause  S settings  R restart  Q quit"),
+        Print(format!(
+            " ←→ move  ↓ soft  space hard  z/x rot  c hold  p pause  s settings  r restart  q title "
+        )),
         ResetColor
     )?;
 
@@ -378,34 +466,103 @@ fn draw_game_frame(
     Ok(())
 }
 
-fn draw_title_overlay(
+fn draw_title_modal(
     game: &Game,
     menu: &MenuState,
     theme: Theme,
     layout: &Layout,
 ) -> std::io::Result<()> {
-    let mut out = stdout();
-    let l = layout;
-    center_on_board(l, 0, "cli-tetris", theme.accent())?;
-    center_on_board(
-        l,
-        1,
-        &format!("High score: {}", game.high_score),
-        theme.muted(),
-    )?;
-
-    for (i, item) in TitleItem::ALL.iter().enumerate() {
-        let selected = menu.title_sel == *item;
-        let prefix = if selected { "> " } else { "  " };
-        let label = format!("{}{}", prefix, item.label());
+    let mut items = vec![
+        ("cli-tetris".into(), theme.accent()),
+        (format!("best  {}", game.high_score), theme.muted()),
+        (String::new(), theme.muted()),
+    ];
+    for item in TitleItem::ALL {
+        let selected = menu.title_sel == item;
+        let label = if selected {
+            format!(" › {}  ", item.label())
+        } else {
+            format!("   {}  ", item.label())
+        };
         let color = if selected {
-            theme.accent()
+            theme.highlight()
         } else {
             theme.text()
         };
-        center_on_board(l, 3 + i as u16, &label, color)?;
+        items.push((label, color));
     }
-    center_on_board(l, 7, "↑↓ select · Enter confirm · Space start", theme.muted())?;
+    items.push((String::new(), theme.muted()));
+    items.push(("↑↓  enter · space start".into(), theme.muted()));
+    draw_modal_card_owned(layout, theme, items)
+}
+
+fn draw_modal_card(
+    l: &Layout,
+    theme: Theme,
+    lines: &[(&str, Color)],
+) -> std::io::Result<()> {
+    let owned: Vec<(String, Color)> = lines
+        .iter()
+        .map(|(s, c)| ((*s).to_string(), *c))
+        .collect();
+    draw_modal_card_owned(l, theme, owned)
+}
+
+fn draw_modal_card_owned(
+    l: &Layout,
+    theme: Theme,
+    lines: Vec<(String, Color)>,
+) -> std::io::Result<()> {
+    let mut out = stdout();
+    let content_w = lines
+        .iter()
+        .map(|(s, _)| s.chars().count())
+        .max()
+        .unwrap_or(10)
+        .max(18) as u16
+        + 4;
+    let content_h = lines.len() as u16 + 2;
+    let px = l.board_x + l.board_pixel_w.saturating_sub(content_w) / 2;
+    let py = l.board_y + l.board_pixel_h.saturating_sub(content_h) / 2;
+
+    fill_rect(px, py, content_w, content_h, theme.panel())?;
+    draw_box(px, py, content_w, content_h, theme.border(), Some(theme.panel()))?;
+
+    for (i, (text, color)) in lines.iter().enumerate() {
+        if text.is_empty() {
+            continue;
+        }
+        let tx = px + (content_w.saturating_sub(text.chars().count() as u16)) / 2;
+        let selected = text.contains('›');
+        if selected {
+            // highlight bar
+            let bar = " ".repeat(content_w.saturating_sub(2) as usize);
+            queue!(
+                out,
+                MoveTo(px + 1, py + 1 + i as u16),
+                SetBackgroundColor(theme.select_bg()),
+                Print(bar),
+                ResetColor
+            )?;
+            queue!(
+                out,
+                MoveTo(tx, py + 1 + i as u16),
+                SetBackgroundColor(theme.select_bg()),
+                SetForegroundColor(*color),
+                Print(text),
+                ResetColor
+            )?;
+        } else {
+            queue!(
+                out,
+                MoveTo(tx, py + 1 + i as u16),
+                SetBackgroundColor(theme.panel()),
+                SetForegroundColor(*color),
+                Print(text),
+                ResetColor
+            )?;
+        }
+    }
     out.flush()?;
     Ok(())
 }
@@ -419,97 +576,116 @@ fn draw_settings(
     let mut out = stdout();
     let l = layout;
 
-    // Centered panel
-    let panel_w: u16 = 52;
-    let panel_h: u16 = 18;
+    let panel_w: u16 = 56.min(l.term_w.saturating_sub(4));
+    let panel_h: u16 = 20.min(l.term_h.saturating_sub(2));
     let px = l.term_w.saturating_sub(panel_w) / 2;
     let py = l.term_h.saturating_sub(panel_h) / 2;
 
-    // Clear panel area with spaces
-    for row in 0..panel_h {
-        queue!(
-            out,
-            MoveTo(px, py + row),
-            Print(" ".repeat(panel_w as usize))
-        )?;
-    }
+    fill_rect(px, py, panel_w, panel_h, theme.panel())?;
+    draw_box(px, py, panel_w, panel_h, theme.border(), Some(theme.panel()))?;
+    label_chip(px + 2, py, "SETTINGS", theme)?;
 
-    draw_box(px, py, panel_w, panel_h, theme.border())?;
-
-    queue!(
-        out,
-        MoveTo(px + 2, py),
-        SetForegroundColor(theme.accent()),
-        Print(" SETTINGS "),
-        ResetColor
-    )?;
-
-    // Tabs
+    // Tabs with underline
     let mut tab_x = px + 2;
     for tab in SettingsTab::ALL {
         let selected = menu.settings_tab == tab;
-        let label = if selected {
-            format!("[{}]", tab.label())
+        let label = format!(" {} ", tab.label());
+        if selected {
+            queue!(
+                out,
+                MoveTo(tab_x, py + 2),
+                SetBackgroundColor(theme.select_bg()),
+                SetForegroundColor(theme.accent()),
+                Print(&label),
+                ResetColor
+            )?;
+            // underline
+            queue!(
+                out,
+                MoveTo(tab_x, py + 3),
+                SetForegroundColor(theme.accent()),
+                Print("─".repeat(label.len())),
+                ResetColor
+            )?;
         } else {
-            format!(" {} ", tab.label())
-        };
-        let color = if selected {
-            theme.accent()
-        } else {
-            theme.muted()
-        };
-        queue!(
-            out,
-            MoveTo(tab_x, py + 2),
-            SetForegroundColor(color),
-            Print(label),
-            ResetColor
-        )?;
-        tab_x += 14;
+            queue!(
+                out,
+                MoveTo(tab_x, py + 2),
+                SetBackgroundColor(theme.panel()),
+                SetForegroundColor(theme.muted()),
+                Print(&label),
+                ResetColor
+            )?;
+            queue!(
+                out,
+                MoveTo(tab_x, py + 3),
+                SetBackgroundColor(theme.panel()),
+                Print(" ".repeat(label.len())),
+                ResetColor
+            )?;
+        }
+        tab_x += label.len() as u16 + 2;
     }
 
-    // Rows
     let rows = settings_rows(settings, menu.settings_tab);
+    let row_w = panel_w.saturating_sub(4) as usize;
     for (i, (name, value)) in rows.iter().enumerate() {
+        let y = py + 5 + i as u16;
         let selected = menu.settings_row == i;
-        let marker = if selected { ">" } else { " " };
-        let color = if selected {
-            theme.highlight()
+        let marker = if selected { "›" } else { " " };
+        let mut line = format!("{marker} {name:<18} {value:>16}");
+        // pad / truncate to panel width
+        let count = line.chars().count();
+        if count < row_w {
+            line.push_str(&" ".repeat(row_w - count));
+        } else if count > row_w {
+            line = line.chars().take(row_w).collect();
+        }
+        if selected {
+            queue!(
+                out,
+                MoveTo(px + 2, y),
+                SetBackgroundColor(theme.select_bg()),
+                SetForegroundColor(theme.highlight()),
+                Print(line),
+                ResetColor
+            )?;
         } else {
-            theme.text()
-        };
-        queue!(
-            out,
-            MoveTo(px + 3, py + 4 + i as u16),
-            SetForegroundColor(color),
-            Print(format!("{} {:<16} {:>18}", marker, name, value)),
-            ResetColor
-        )?;
+            queue!(
+                out,
+                MoveTo(px + 2, y),
+                SetBackgroundColor(theme.panel()),
+                SetForegroundColor(theme.text()),
+                Print(line),
+                ResetColor
+            )?;
+        }
     }
 
-    // Theme preview swatches
     if menu.settings_tab == SettingsTab::Colors {
-        let y = py + 4 + rows.len() as u16 + 1;
+        let y = py + 5 + rows.len() as u16 + 1;
         queue!(
             out,
             MoveTo(px + 3, y),
+            SetBackgroundColor(theme.panel()),
             SetForegroundColor(theme.muted()),
-            Print("Preview "),
+            Print("preview  "),
             ResetColor
         )?;
-        let mut sx = px + 11;
+        let mut sx = px + 12;
         for kind in PieceKind::ALL {
-            let fill = cell_fill(theme.piece(kind), 2, 1);
-            queue!(out, MoveTo(sx, y), Print(&fill[0]))?;
+            queue!(out, MoveTo(sx, y), Print(solid_cell(theme.piece(kind), 2)))?;
             sx += 3;
         }
     }
 
+    // Hint bar
     queue!(
         out,
         MoveTo(px + 2, py + panel_h - 2),
+        SetBackgroundColor(theme.panel()),
         SetForegroundColor(theme.muted()),
-        Print("←→ tab/value  ↑↓ row  R reset tab  Esc apply & back"),
+        Print("[ ] tabs   ↑↓ row   ←→ value   R reset tab   Esc save"),
         ResetColor
     )?;
 
@@ -539,15 +715,15 @@ fn settings_rows(settings: &Settings, tab: SettingsTab) -> Vec<(String, String)>
         ],
         SettingsTab::Colors => vec![
             ("Theme".into(), settings.theme.label().into()),
-            ("Reset all".into(), "Enter / ←→".into()),
+            ("Reset all defaults".into(), "←→ apply".into()),
         ],
     }
 }
 
 fn center_on_board(l: &Layout, row_off: u16, msg: &str, color: Color) -> std::io::Result<()> {
     let mut out = stdout();
-    let cx = l.board_x + l.board_pixel_w / 2 - (msg.len() as u16) / 2;
-    let cy = l.board_y + l.board_pixel_h / 2 - 2 + row_off;
+    let cx = l.board_x + l.board_pixel_w / 2 - (msg.chars().count() as u16) / 2;
+    let cy = l.board_y + l.board_pixel_h / 2 + row_off;
     queue!(
         out,
         MoveTo(cx, cy),

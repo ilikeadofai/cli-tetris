@@ -4,21 +4,28 @@ use crate::theme::ThemeId;
 use std::fs;
 use std::path::PathBuf;
 
+/// Horizontal mino width only (always 1 terminal row tall — no vertical stretch).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScaleMode {
     Auto,
+    /// 1 column — compact
     X1,
+    /// 2 columns — near-square (default look)
     X2,
+    /// 3 columns — large
     X3,
+    /// 4 columns — huge
+    X4,
 }
 
 impl ScaleMode {
     pub fn label(self) -> &'static str {
         match self {
             ScaleMode::Auto => "Auto",
-            ScaleMode::X1 => "1x",
-            ScaleMode::X2 => "2x",
-            ScaleMode::X3 => "3x",
+            ScaleMode::X1 => "Compact (1)",
+            ScaleMode::X2 => "Normal (2)",
+            ScaleMode::X3 => "Large (3)",
+            ScaleMode::X4 => "Huge (4)",
         }
     }
 
@@ -27,16 +34,18 @@ impl ScaleMode {
             ScaleMode::Auto => ScaleMode::X1,
             ScaleMode::X1 => ScaleMode::X2,
             ScaleMode::X2 => ScaleMode::X3,
-            ScaleMode::X3 => ScaleMode::Auto,
+            ScaleMode::X3 => ScaleMode::X4,
+            ScaleMode::X4 => ScaleMode::Auto,
         }
     }
 
     pub fn prev(self) -> Self {
         match self {
-            ScaleMode::Auto => ScaleMode::X3,
+            ScaleMode::Auto => ScaleMode::X4,
             ScaleMode::X1 => ScaleMode::Auto,
             ScaleMode::X2 => ScaleMode::X1,
             ScaleMode::X3 => ScaleMode::X2,
+            ScaleMode::X4 => ScaleMode::X3,
         }
     }
 
@@ -46,15 +55,17 @@ impl ScaleMode {
             ScaleMode::X1 => "1",
             ScaleMode::X2 => "2",
             ScaleMode::X3 => "3",
+            ScaleMode::X4 => "4",
         }
     }
 
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_ascii_lowercase().as_str() {
             "auto" => Some(ScaleMode::Auto),
-            "1" | "1x" => Some(ScaleMode::X1),
-            "2" | "2x" => Some(ScaleMode::X2),
-            "3" | "3x" => Some(ScaleMode::X3),
+            "1" | "1x" | "compact" => Some(ScaleMode::X1),
+            "2" | "2x" | "normal" => Some(ScaleMode::X2),
+            "3" | "3x" | "large" => Some(ScaleMode::X3),
+            "4" | "4x" | "huge" => Some(ScaleMode::X4),
             _ => None,
         }
     }
