@@ -4,6 +4,7 @@ use crate::bag::SevenBag;
 use crate::board::{Board, Cell};
 use crate::hiscore;
 use crate::piece::{wall_kicks, Piece, PieceKind};
+use crate::settings::Settings;
 
 fn gravity_ms(level: u32) -> u64 {
     let table: [u64; 15] = [
@@ -15,11 +16,7 @@ fn gravity_ms(level: u32) -> u64 {
 
 const LOCK_DELAY_MS: u64 = 500;
 const LOCK_RESET_MAX: u32 = 15;
-const DAS_MS: u64 = 120;
-const ARR_MS: u64 = 20;
-const SOFT_DROP_MS: u64 = 25;
 const KEY_HOLD_TIMEOUT_MS: u64 = 70;
-const NEXT_COUNT: usize = 5;
 const LINE_CLEAR_FLASH_MS: u64 = 150;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,13 +118,23 @@ pub struct Game {
     last_was_rotation: bool,
     last_kick_index: usize,
     last_tspin: TSpinKind,
+
+    // Handling (from settings)
+    pub das_ms: u64,
+    pub arr_ms: u64,
+    pub sdf_ms: u64,
+    pub next_count: usize,
 }
 
 impl Game {
     pub fn new() -> Self {
+        Self::with_settings(&Settings::default())
+    }
+
+    pub fn with_settings(settings: &Settings) -> Self {
         let mut bag = SevenBag::new();
         let kind = bag.next();
-        Self {
+        let mut g = Self {
             board: Board::new(),
             current: Piece::new(kind),
             hold: None,
@@ -163,11 +170,24 @@ impl Game {
             last_was_rotation: false,
             last_kick_index: 0,
             last_tspin: TSpinKind::None,
-        }
+            das_ms: settings.das_ms,
+            arr_ms: settings.arr_ms,
+            sdf_ms: settings.sdf_ms,
+            next_count: settings.next_count,
+        };
+        g.apply_settings(settings);
+        g
+    }
+
+    pub fn apply_settings(&mut self, settings: &Settings) {
+        self.das_ms = settings.das_ms;
+        self.arr_ms = settings.arr_ms;
+        self.sdf_ms = settings.sdf_ms;
+        self.next_count = settings.next_count.clamp(1, 5);
     }
 
     pub fn next_queue(&self) -> Vec<PieceKind> {
-        self.bag.peek(NEXT_COUNT)
+        self.bag.peek(self.next_count)
     }
 
     pub fn ghost_y(&self) -> i32 {
@@ -202,9 +222,9 @@ impl Game {
         }
     }
 
-    pub fn restart(&mut self) {
+    pub fn restart(&mut self, settings: &Settings) {
         let hs = self.high_score.max(hiscore::load());
-        *self = Self::new();
+        *self = Self::with_settings(settings);
         self.high_score = hs;
     }
 
@@ -597,12 +617,17 @@ impl Game {
 
         if self.das_dir != 0 && (self.left_held || self.right_held) {
             self.das_timer = self.das_timer.saturating_add(dt);
-            if self.das_timer >= DAS_MS {
-                self.arr_timer = self.arr_timer.saturating_add(dt);
-                while self.arr_timer >= ARR_MS {
-                    self.arr_timer -= ARR_MS;
-                    if !self.try_move(self.das_dir, 0) {
-                        break;
+            if self.das_timer >= self.das_ms {
+                if self.arr_ms == 0 {
+                    // Instant ARR: slide until blocked
+                    while self.try_move(self.das_dir, 0) {}
+                } else {
+                    self.arr_timer = self.arr_timer.saturating_add(dt);
+                    while self.arr_timer >= self.arr_ms {
+                        self.arr_timer -= self.arr_ms;
+                        if !self.try_move(self.das_dir, 0) {
+                            break;
+                        }
                     }
                 }
             }
@@ -610,8 +635,8 @@ impl Game {
 
         if self.soft_dropping {
             self.soft_timer = self.soft_timer.saturating_add(dt);
-            while self.soft_timer >= SOFT_DROP_MS {
-                self.soft_timer -= SOFT_DROP_MS;
+            while self.soft_timer >= self.sdf_ms {
+                self.soft_timer -= self.sdf_ms;
                 if !self.try_move(0, 1) {
                     break;
                 }

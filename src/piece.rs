@@ -1,6 +1,5 @@
 //! Tetromino shapes, SRS rotations, and wall-kick tables (guideline / TETR.IO style).
-
-use crossterm::style::Color;
+//! Piece colors live in `theme` (settings-selectable palettes).
 
 pub const BOARD_W: i32 = 10;
 pub const BOARD_H: i32 = 40; // 20 visible + 20 buffer (TETR.IO-style)
@@ -29,86 +28,6 @@ impl PieceKind {
         PieceKind::J,
         PieceKind::L,
     ];
-
-    pub fn color(self) -> Color {
-        match self {
-            PieceKind::I => Color::Rgb {
-                r: 0x00,
-                g: 0xF0,
-                b: 0xF0,
-            },
-            PieceKind::O => Color::Rgb {
-                r: 0xF0,
-                g: 0xF0,
-                b: 0x00,
-            },
-            PieceKind::T => Color::Rgb {
-                r: 0xA0,
-                g: 0x00,
-                b: 0xF0,
-            },
-            PieceKind::S => Color::Rgb {
-                r: 0x00,
-                g: 0xF0,
-                b: 0x00,
-            },
-            PieceKind::Z => Color::Rgb {
-                r: 0xF0,
-                g: 0x00,
-                b: 0x00,
-            },
-            PieceKind::J => Color::Rgb {
-                r: 0x00,
-                g: 0x00,
-                b: 0xF0,
-            },
-            PieceKind::L => Color::Rgb {
-                r: 0xF0,
-                g: 0xA0,
-                b: 0x00,
-            },
-        }
-    }
-
-    pub fn ghost_color(self) -> Color {
-        match self {
-            PieceKind::I => Color::Rgb {
-                r: 0x00,
-                g: 0x60,
-                b: 0x60,
-            },
-            PieceKind::O => Color::Rgb {
-                r: 0x60,
-                g: 0x60,
-                b: 0x00,
-            },
-            PieceKind::T => Color::Rgb {
-                r: 0x40,
-                g: 0x00,
-                b: 0x60,
-            },
-            PieceKind::S => Color::Rgb {
-                r: 0x00,
-                g: 0x60,
-                b: 0x00,
-            },
-            PieceKind::Z => Color::Rgb {
-                r: 0x60,
-                g: 0x00,
-                b: 0x00,
-            },
-            PieceKind::J => Color::Rgb {
-                r: 0x00,
-                g: 0x00,
-                b: 0x60,
-            },
-            PieceKind::L => Color::Rgb {
-                r: 0x60,
-                g: 0x40,
-                b: 0x00,
-            },
-        }
-    }
 
     /// Local minos for rotation 0 (guideline spawn). y+ is down (board coords).
     fn offsets0(self) -> [(i32, i32); 4] {
