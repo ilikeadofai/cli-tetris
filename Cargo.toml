@@ -1,0 +1,10 @@
+[package]
+name = "cli-tetris"
+version = "0.1.0"
+edition = "2021"
+description = "Terminal Tetris with TETR.IO-style guideline rules"
+license = "MIT"
+
+[dependencies]
+crossterm = "0.28"
+rand = "0.8"
