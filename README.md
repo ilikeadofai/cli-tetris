@@ -1,16 +1,16 @@
 # cli-tetris
 
-Terminal Tetris in Rust, inspired by **TETR.IO** guideline rules — with a settings menu, dynamic sizing, and color themes.
+Terminal Tetris in Rust, inspired by **TETR.IO** — guideline rules, settings menu, dynamic sizing, and color themes.
 
 ## Features
 
-- **Centered spawn** — pieces enter from the middle of the field
-- **7-bag**, **SRS**, hold, next queue, ghost, lock delay
+- Centered spawn, 7-bag, SRS, hold, next queue, ghost, lock delay
 - Combo, B2B, T-spin detection, line-clear flash
-- **Settings menu** (TETR.IO-style tabs): Handling · Video · Colors
-- **Dynamic sizing** — Auto / 1× / 2× / 3× board scale, optional centering
-- **Color themes** — Terminal (ANSI/TTY), Guideline, Catppuccin, Dracula, Nord, Gruvbox, Monochrome
-- High score + config saved under your home directory
+- **Deep settings** (TETR.IO-style tabs): Handling · Gameplay · Video · Colors
+- Handling presets (Default / Fast / Instant ARR / Slow)
+- Dynamic scale (width-only so minos stay square)
+- Themes: Terminal ANSI, Guideline, Catppuccin, Dracula, Nord, Gruvbox, Monochrome
+- High score + config under `~`
 
 ## Run
 
@@ -20,46 +20,58 @@ cd cli-tetris
 cargo run --release
 ```
 
-Needs a truecolor-capable terminal for most themes; **Terminal (ANSI)** follows your TTY palette.
-
 ## Controls
 
 | Key | Action |
 |-----|--------|
 | `↑↓` / Enter | Title menu |
 | `Space` | Quick start / hard drop |
-| `S` | Settings (title or pause) |
-| `←→` | Move / change setting |
-| `↓` | Soft drop |
-| `Z` / `X`/`↑` | Rotate CCW / CW |
-| `A` | 180° |
-| `C` | Hold |
-| `P` | Pause |
-| `R` | Restart / reset settings tab |
+| `S` | Settings |
 | `[` `]` | Settings tabs |
+| `←→` | Move / change setting |
+| `R` | Restart / reset settings tab |
+| `P` | Pause |
 | `Esc` | Back / pause |
-| `Q` | Quit (title) or return to title |
+| `Q` | Quit title / return to title |
 
-### Settings
+## Settings
 
-| Tab | Options |
-|-----|---------|
-| **Handling** | DAS, ARR, SDF (soft-drop ms/cell) |
-| **Video** | Scale (Auto / Compact–Huge, width-only so minos stay square), ghost, next, grid, center |
-| **Colors** | Theme presets + live swatch preview |
+### Handling
+| Option | Notes |
+|--------|--------|
+| **Preset** | Default, Fast, Instant ARR, Slow (or Custom) |
+| **DAS** | Delayed auto-shift (ms) |
+| **ARR** | Auto-repeat rate; `0` = instant slide |
+| **SDF** | Soft-drop interval (ms) or **INF** |
+| **SDF infinite** | Soft drop at max speed |
+| **Soft drop points** | Score while soft-dropping |
 
-Config file: `~/.cli-tetris-config`  
-High score: `~/.cli-tetris-hiscore`
+### Gameplay
+| Option | Notes |
+|--------|--------|
+| **Start level** | 1–20 |
+| **Lines / level** | Level-up interval |
+| **Lock delay** | Ground lock timer (ms) |
+| **Lock reset max** | Move/rotate resets before force-lock |
+| **Gravity curve** | Modern / Classic / Static |
+| **Static gravity** | Cell delay when curve is Static |
+| **Hold** | Enable hold piece |
+| **180° rotate** | Enable `A` 180 spin |
+| **Next queue** | 0–5 previews |
+| **Line clear anim** | Flash duration (`0` = instant) |
 
-## Project layout
+### Video
+Scale, ghost, grid, center board, action text, stats panel, PPS, time, mino bevel, footer help.
+
+### Colors
+Theme presets + live swatches. **Reset ALL** restores every setting.
+
+Config: `~/.cli-tetris-config` · High score: `~/.cli-tetris-hiscore`
+
+## Layout
 
 ```
 src/
-  main.rs      — screens + input
-  game.rs      — gameplay
-  settings.rs  — load/save settings
-  theme.rs     — color palettes
-  layout.rs    — dynamic board layout
-  menu.rs      — title + settings navigation
-  piece.rs / board.rs / bag.rs / render.rs / hiscore.rs
+  main.rs game.rs settings.rs menu.rs theme.rs layout.rs
+  piece.rs board.rs bag.rs render.rs hiscore.rs
 ```

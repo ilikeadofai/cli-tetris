@@ -4,20 +4,32 @@ use crate::bag::SevenBag;
 use crate::board::{Board, Cell};
 use crate::hiscore;
 use crate::piece::{wall_kicks, Piece, PieceKind};
-use crate::settings::Settings;
+use crate::settings::{GravityCurve, Settings};
 
-fn gravity_ms(level: u32) -> u64 {
-    let table: [u64; 15] = [
-        800, 720, 630, 550, 470, 380, 300, 220, 140, 100, 80, 60, 40, 30, 20,
-    ];
-    let idx = (level.saturating_sub(1) as usize).min(table.len() - 1);
-    table[idx]
+fn gravity_ms(level: u32, curve: GravityCurve, static_ms: u64) -> u64 {
+    match curve {
+        GravityCurve::Static => static_ms,
+        GravityCurve::Modern => {
+            let table: [u64; 20] = [
+                800, 720, 630, 550, 470, 380, 300, 220, 140, 100, 80, 60, 40, 30, 20, 16, 12, 10,
+                8, 5,
+            ];
+            let idx = (level.saturating_sub(1) as usize).min(table.len() - 1);
+            table[idx]
+        }
+        GravityCurve::Classic => {
+            // NES-ish slower start
+            let table: [u64; 20] = [
+                1000, 900, 800, 700, 600, 500, 400, 300, 220, 160, 120, 90, 70, 50, 40, 30, 25, 20,
+                16, 12,
+            ];
+            let idx = (level.saturating_sub(1) as usize).min(table.len() - 1);
+            table[idx]
+        }
+    }
 }
 
-const LOCK_DELAY_MS: u64 = 500;
-const LOCK_RESET_MAX: u32 = 15;
 const KEY_HOLD_TIMEOUT_MS: u64 = 70;
-const LINE_CLEAR_FLASH_MS: u64 = 150;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClearType {
@@ -119,11 +131,23 @@ pub struct Game {
     last_kick_index: usize,
     last_tspin: TSpinKind,
 
-    // Handling (from settings)
+    // From settings (runtime)
     pub das_ms: u64,
     pub arr_ms: u64,
     pub sdf_ms: u64,
+    pub sdf_infinite: bool,
+    pub soft_drop_points: bool,
     pub next_count: usize,
+    pub lock_delay_ms: u64,
+    pub lock_resets_max: u32,
+    pub gravity: GravityCurve,
+    pub static_gravity_ms: u64,
+    pub lines_per_level: u32,
+    pub hold_enabled: bool,
+    pub allow_180: bool,
+    pub line_clear_ms: u64,
+    /// Base level at game start (for display / scoring floor).
+    pub start_level: u32,
 }
 
 impl Game {
@@ -173,17 +197,45 @@ impl Game {
             das_ms: settings.das_ms,
             arr_ms: settings.arr_ms,
             sdf_ms: settings.sdf_ms,
+            sdf_infinite: settings.sdf_infinite,
+            soft_drop_points: settings.soft_drop_points,
             next_count: settings.next_count,
+            lock_delay_ms: settings.lock_delay_ms,
+            lock_resets_max: settings.lock_resets_max,
+            gravity: settings.gravity,
+            static_gravity_ms: settings.static_gravity_ms,
+            lines_per_level: settings.lines_per_level,
+            hold_enabled: settings.hold_enabled,
+            allow_180: settings.allow_180,
+            line_clear_ms: settings.line_clear_ms,
+            start_level: settings.start_level,
         };
         g.apply_settings(settings);
+        g.level = settings.start_level.max(1);
         g
     }
 
     pub fn apply_settings(&mut self, settings: &Settings) {
         self.das_ms = settings.das_ms;
         self.arr_ms = settings.arr_ms;
-        self.sdf_ms = settings.sdf_ms;
-        self.next_count = settings.next_count.clamp(1, 5);
+        self.sdf_ms = settings.sdf_ms.max(1); // avoid div0 when not infinite
+        self.sdf_infinite = settings.sdf_infinite;
+        self.soft_drop_points = settings.soft_drop_points;
+        self.next_count = settings.next_count.min(5);
+        self.lock_delay_ms = settings.lock_delay_ms;
+        self.lock_resets_max = settings.lock_resets_max;
+        self.gravity = settings.gravity;
+        self.static_gravity_ms = settings.static_gravity_ms;
+        self.lines_per_level = settings.lines_per_level.max(1);
+        self.hold_enabled = settings.hold_enabled;
+        self.allow_180 = settings.allow_180;
+        self.line_clear_ms = settings.line_clear_ms;
+        self.start_level = settings.start_level.max(1);
+        // Don't clobber mid-game level when tweaking settings from pause —
+        // only raise floor if below start_level.
+        if self.level < self.start_level {
+            self.level = self.start_level;
+        }
     }
 
     pub fn next_queue(&self) -> Vec<PieceKind> {
@@ -297,7 +349,7 @@ impl Game {
     }
 
     pub fn rotate_180(&mut self) {
-        if self.phase != GamePhase::Playing {
+        if self.phase != GamePhase::Playing || !self.allow_180 {
             return;
         }
         if self.try_rotate(true) {
@@ -306,7 +358,7 @@ impl Game {
     }
 
     pub fn hold(&mut self) {
-        if self.phase != GamePhase::Playing || self.hold_used {
+        if self.phase != GamePhase::Playing || !self.hold_enabled || self.hold_used {
             return;
         }
         self.hold_used = true;
@@ -340,7 +392,7 @@ impl Game {
             if dx != 0 || dy != 0 {
                 self.last_was_rotation = false;
             }
-            if dy > 0 && self.soft_dropping {
+            if dy > 0 && self.soft_dropping && self.soft_drop_points {
                 self.score += 1;
             }
             self.on_piece_moved();
@@ -376,8 +428,8 @@ impl Game {
 
     fn on_piece_moved(&mut self) {
         if self.is_on_ground() {
-            if self.lock_resets < LOCK_RESET_MAX {
-                self.lock_timer = Some(LOCK_DELAY_MS);
+            if self.lock_resets < self.lock_resets_max {
+                self.lock_timer = Some(self.lock_delay_ms);
                 self.lock_resets += 1;
             }
         } else {
@@ -440,10 +492,14 @@ impl Game {
                 self.clear_flash_ms = 600;
             }
             self.finish_lock_cycle();
+        } else if self.line_clear_ms == 0 {
+            self.pending_tspin = self.last_tspin;
+            self.flashing_rows = rows;
+            self.finish_clear_animation();
         } else {
             self.pending_tspin = self.last_tspin;
             self.flashing_rows = rows;
-            self.flash_timer = LINE_CLEAR_FLASH_MS;
+            self.flash_timer = self.line_clear_ms;
             self.phase = GamePhase::Clearing;
             self.lock_timer = None;
             self.lock_resets = 0;
@@ -461,7 +517,7 @@ impl Game {
         let clear = self.classify_clear(cleared);
         self.apply_score(clear, cleared);
         self.last_clear = clear;
-        self.clear_flash_ms = 800;
+        self.clear_flash_ms = if self.line_clear_ms == 0 { 0 } else { 800 };
         self.phase = GamePhase::Playing;
         self.finish_lock_cycle();
     }
@@ -541,7 +597,8 @@ impl Game {
         self.score += pts;
 
         self.lines += lines;
-        self.level = 1 + self.lines / 10;
+        let lpl = self.lines_per_level.max(1);
+        self.level = self.start_level + self.lines / lpl;
         self.touch_high_score();
     }
 
@@ -634,15 +691,20 @@ impl Game {
         }
 
         if self.soft_dropping {
-            self.soft_timer = self.soft_timer.saturating_add(dt);
-            while self.soft_timer >= self.sdf_ms {
-                self.soft_timer -= self.sdf_ms;
-                if !self.try_move(0, 1) {
-                    break;
+            if self.sdf_infinite {
+                while self.try_move(0, 1) {}
+            } else {
+                let step = self.sdf_ms.max(1);
+                self.soft_timer = self.soft_timer.saturating_add(dt);
+                while self.soft_timer >= step {
+                    self.soft_timer -= step;
+                    if !self.try_move(0, 1) {
+                        break;
+                    }
                 }
             }
         } else {
-            let g = gravity_ms(self.level);
+            let g = gravity_ms(self.level, self.gravity, self.static_gravity_ms);
             self.gravity_accum = self.gravity_accum.saturating_add(dt);
             while self.gravity_accum >= g {
                 self.gravity_accum -= g;
@@ -657,7 +719,7 @@ impl Game {
         }
 
         if self.is_on_ground() {
-            let timer = self.lock_timer.get_or_insert(LOCK_DELAY_MS);
+            let timer = self.lock_timer.get_or_insert(self.lock_delay_ms);
             *timer = timer.saturating_sub(dt);
             if *timer == 0 {
                 self.lock_piece();
