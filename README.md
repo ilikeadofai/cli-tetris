@@ -24,11 +24,17 @@ cargo run --release
 
 | Key | Action |
 |-----|--------|
-| `↑↓` / Enter | Title menu |
+| `↑↓` / `Enter` | Navigate / select menus |
+| `←` / `→` | Move piece |
+| `↓` | Soft drop |
 | `Space` | Quick start / hard drop |
+| `Z` | Rotate counterclockwise |
+| `X` / `↑` | Rotate clockwise |
+| `A` | Rotate 180° |
+| `C` | Hold piece |
 | `S` | Settings |
 | `[` `]` | Settings tabs |
-| `←→` | Move / change setting |
+| `←` / `→` | Change setting values |
 | `R` | Restart / reset settings tab |
 | `P` | Pause |
 | `Esc` | Back / pause |

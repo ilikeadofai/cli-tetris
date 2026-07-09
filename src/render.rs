@@ -63,9 +63,9 @@ fn solid_cell(color: Color, cell_w: u16, bevel: bool) -> String {
     if bevel && cell_w >= 2 {
         let hi = match color {
             Color::Rgb { r, g, b } => Color::Rgb {
-                r: r.saturating_add(36).min(255),
-                g: g.saturating_add(36).min(255),
-                b: b.saturating_add(36).min(255),
+                r: r.saturating_add(36),
+                g: g.saturating_add(36),
+                b: b.saturating_add(36),
             },
             other => other,
         };
@@ -85,8 +85,16 @@ fn solid_cell(color: Color, cell_w: u16, bevel: bool) -> String {
 
 fn empty_cell(theme: Theme, checker: bool, grid: GridStyle, cell_w: u16) -> String {
     match grid {
-        GridStyle::Off => paint_bg(theme.grid_b(), theme.grid_b(), &mino_str(cell_w, MinoStyle::Empty)),
-        GridStyle::Flat => paint_bg(theme.grid_b(), theme.grid_b(), &mino_str(cell_w, MinoStyle::Empty)),
+        GridStyle::Off => paint_bg(
+            theme.grid_b(),
+            theme.grid_b(),
+            &mino_str(cell_w, MinoStyle::Empty),
+        ),
+        GridStyle::Flat => paint_bg(
+            theme.grid_b(),
+            theme.grid_b(),
+            &mino_str(cell_w, MinoStyle::Empty),
+        ),
         GridStyle::Checker => {
             let bg = if checker {
                 theme.grid_a()
@@ -124,7 +132,14 @@ fn fill_rect(x: u16, y: u16, w: u16, h: u16, bg: Color) -> std::io::Result<()> {
     Ok(())
 }
 
-fn draw_box(x: u16, y: u16, w: u16, h: u16, border: Color, fill: Option<Color>) -> std::io::Result<()> {
+fn draw_box(
+    x: u16,
+    y: u16,
+    w: u16,
+    h: u16,
+    border: Color,
+    fill: Option<Color>,
+) -> std::io::Result<()> {
     let mut out = stdout();
     if let Some(bg) = fill {
         for row in 1..h.saturating_sub(1) {
@@ -149,11 +164,7 @@ fn draw_box(x: u16, y: u16, w: u16, h: u16, border: Color, fill: Option<Color>) 
     queue!(out, Print("╮"))?;
     for row in 1..h.saturating_sub(1) {
         queue!(out, MoveTo(x, y + row), Print("│"))?;
-        queue!(
-            out,
-            MoveTo(x + w.saturating_sub(1), y + row),
-            Print("│")
-        )?;
+        queue!(out, MoveTo(x + w.saturating_sub(1), y + row), Print("│"))?;
     }
     queue!(out, MoveTo(x, y + h.saturating_sub(1)), Print("╰"))?;
     for _ in 0..w.saturating_sub(2) {
@@ -266,23 +277,27 @@ fn draw_game_frame(
     let bevel = settings.mino_bevel;
 
     // ── HOLD panel ──
-    draw_box(l.hold_x, l.hold_y, 12, 6, theme.border(), Some(theme.panel()))?;
+    draw_box(
+        l.hold_x,
+        l.hold_y,
+        12,
+        6,
+        theme.border(),
+        Some(theme.panel()),
+    )?;
     label_chip(
         l.hold_x + 1,
         l.hold_y,
-        if settings.hold_enabled { "HOLD" } else { "HOLD·" },
+        if settings.hold_enabled {
+            "HOLD"
+        } else {
+            "HOLD·"
+        },
         theme,
     )?;
     if settings.hold_enabled {
         if let Some(h) = game.hold {
-            draw_mini_piece(
-                h,
-                l.hold_x + 2,
-                l.hold_y + 2,
-                theme,
-                game.hold_used,
-                bevel,
-            )?;
+            draw_mini_piece(h, l.hold_x + 2, l.hold_y + 2, theme, game.hold_used, bevel)?;
         }
     }
 
@@ -424,10 +439,7 @@ fn draw_game_frame(
     }
 
     // Clear-type banner
-    if settings.show_action_text
-        && game.clear_flash_ms > 0
-        && game.last_clear != ClearType::None
-    {
+    if settings.show_action_text && game.clear_flash_ms > 0 && game.last_clear != ClearType::None {
         let label = game.last_clear.label();
         center_on_board(l, 0, label, theme.highlight())?;
     }
@@ -517,15 +529,8 @@ fn draw_title_modal(
     draw_modal_card_owned(layout, theme, items)
 }
 
-fn draw_modal_card(
-    l: &Layout,
-    theme: Theme,
-    lines: &[(&str, Color)],
-) -> std::io::Result<()> {
-    let owned: Vec<(String, Color)> = lines
-        .iter()
-        .map(|(s, c)| ((*s).to_string(), *c))
-        .collect();
+fn draw_modal_card(l: &Layout, theme: Theme, lines: &[(&str, Color)]) -> std::io::Result<()> {
+    let owned: Vec<(String, Color)> = lines.iter().map(|(s, c)| ((*s).to_string(), *c)).collect();
     draw_modal_card_owned(l, theme, owned)
 }
 
@@ -547,7 +552,14 @@ fn draw_modal_card_owned(
     let py = l.board_y + l.board_pixel_h.saturating_sub(content_h) / 2;
 
     fill_rect(px, py, content_w, content_h, theme.panel())?;
-    draw_box(px, py, content_w, content_h, theme.border(), Some(theme.panel()))?;
+    draw_box(
+        px,
+        py,
+        content_w,
+        content_h,
+        theme.border(),
+        Some(theme.panel()),
+    )?;
 
     for (i, (text, color)) in lines.iter().enumerate() {
         if text.is_empty() {
@@ -603,7 +615,14 @@ fn draw_settings(
     let py = l.term_h.saturating_sub(panel_h) / 2;
 
     fill_rect(px, py, panel_w, panel_h, theme.panel())?;
-    draw_box(px, py, panel_w, panel_h, theme.border(), Some(theme.panel()))?;
+    draw_box(
+        px,
+        py,
+        panel_w,
+        panel_h,
+        theme.border(),
+        Some(theme.panel()),
+    )?;
     label_chip(px + 2, py, "SETTINGS", theme)?;
 
     // Tabs

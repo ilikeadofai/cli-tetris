@@ -3,7 +3,7 @@
 use crate::bag::SevenBag;
 use crate::board::{Board, Cell};
 use crate::hiscore;
-use crate::piece::{wall_kicks, Piece, PieceKind};
+use crate::piece::{wall_kicks, wall_kicks_180, Piece, PieceKind};
 use crate::settings::{GravityCurve, Settings};
 
 fn gravity_ms(level: u32, curve: GravityCurve, static_ms: u64) -> u64 {
@@ -128,7 +128,7 @@ pub struct Game {
     soft_timer: u64,
 
     last_was_rotation: bool,
-    last_kick_index: usize,
+    last_rotation_upgrades_tspin: bool,
     last_tspin: TSpinKind,
 
     // From settings (runtime)
@@ -192,7 +192,7 @@ impl Game {
             arr_timer: 0,
             soft_timer: 0,
             last_was_rotation: false,
-            last_kick_index: 0,
+            last_rotation_upgrades_tspin: false,
             last_tspin: TSpinKind::None,
             das_ms: settings.das_ms,
             arr_ms: settings.arr_ms,
@@ -352,9 +352,8 @@ impl Game {
         if self.phase != GamePhase::Playing || !self.allow_180 {
             return;
         }
-        if self.try_rotate(true) {
-            let _ = self.try_rotate(true);
-        }
+        let to = (self.current.rot + 2) % 4;
+        self.try_rotate_to(to, wall_kicks_180(self.current.kind));
     }
 
     pub fn hold(&mut self) {
@@ -403,13 +402,12 @@ impl Game {
 
     fn try_rotate(&mut self, cw: bool) -> bool {
         let from = self.current.rot;
-        let to = if cw {
-            (from + 1) % 4
-        } else {
-            (from + 3) % 4
-        };
-        let kicks = wall_kicks(self.current.kind, from, to);
+        let to = if cw { (from + 1) % 4 } else { (from + 3) % 4 };
+        self.try_rotate_to(to, wall_kicks(self.current.kind, from, to))
+    }
 
+    fn try_rotate_to(&mut self, to: u8, kicks: &[(i32, i32)]) -> bool {
+        let is_180 = (to + 4 - self.current.rot % 4) % 4 == 2;
         for (i, &(dx, dy)) in kicks.iter().enumerate() {
             let mut next = self.current;
             next.rot = to;
@@ -418,7 +416,7 @@ impl Game {
             if self.board.fits(&next) {
                 self.current = next;
                 self.last_was_rotation = true;
-                self.last_kick_index = i;
+                self.last_rotation_upgrades_tspin = !is_180 && i == 4;
                 self.on_piece_moved();
                 return true;
             }
@@ -468,9 +466,9 @@ impl Game {
             2 => ((cx - 1, cy + 1), (cx + 1, cy + 1)),
             _ => ((cx - 1, cy - 1), (cx - 1, cy + 1)),
         };
-        let front = self.board.get(fa.0, fa.1) != Cell::Empty
-            && self.board.get(fb.0, fb.1) != Cell::Empty;
-        if front || self.last_kick_index >= 4 {
+        let front =
+            self.board.get(fa.0, fa.1) != Cell::Empty && self.board.get(fb.0, fb.1) != Cell::Empty;
+        if front || self.last_rotation_upgrades_tspin {
             TSpinKind::Full
         } else {
             TSpinKind::Mini
@@ -733,5 +731,108 @@ impl Game {
 impl Default for Game {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clear_180_rotation_reaches_opposite_state() {
+        let settings = Settings {
+            allow_180: true,
+            ..Settings::default()
+        };
+        let mut game = Game::with_settings(&settings);
+        game.phase = GamePhase::Playing;
+        game.current = Piece {
+            kind: PieceKind::T,
+            x: 4,
+            y: 25,
+            rot: 3,
+        };
+
+        game.rotate_180();
+
+        assert_eq!(game.current.rot, 1);
+        assert_eq!((game.current.x, game.current.y), (4, 25));
+    }
+
+    #[test]
+    fn late_180_kicks_do_not_upgrade_tspin_mini() {
+        let settings = Settings {
+            allow_180: true,
+            ..Settings::default()
+        };
+        let mut game = Game::with_settings(&settings);
+        game.phase = GamePhase::Playing;
+        game.current = Piece {
+            kind: PieceKind::T,
+            x: 4,
+            y: 25,
+            rot: 0,
+        };
+
+        for (x, y) in [(4, 26), (5, 24), (6, 25)] {
+            game.board.set(x, y, Cell::Filled(PieceKind::Z));
+        }
+        game.rotate_180();
+        assert_eq!(
+            (game.current.x, game.current.y, game.current.rot),
+            (3, 25, 2)
+        );
+
+        for (x, y) in [(2, 24), (4, 24)] {
+            game.board.set(x, y, Cell::Filled(PieceKind::Z));
+        }
+
+        assert_eq!(game.detect_tspin(), TSpinKind::Mini);
+    }
+
+    #[test]
+    fn failed_180_rotation_is_atomic() {
+        let settings = Settings {
+            allow_180: true,
+            ..Settings::default()
+        };
+        let mut game = Game::with_settings(&settings);
+        game.phase = GamePhase::Playing;
+        game.current = Piece {
+            kind: PieceKind::L,
+            x: 4,
+            y: 25,
+            rot: 0,
+        };
+
+        for (x, y) in [
+            (3, 26),
+            (6, 25),
+            (4, 27),
+            (3, 24),
+            (6, 23),
+            (3, 27),
+            (2, 26),
+            (7, 25),
+            (1, 26),
+        ] {
+            game.board.set(x, y, Cell::Filled(PieceKind::Z));
+        }
+
+        let before = game.current;
+        game.lock_timer = Some(137);
+        game.lock_resets = 3;
+        game.last_was_rotation = true;
+        game.last_rotation_upgrades_tspin = true;
+        game.rotate_180();
+
+        assert_eq!(game.current.kind, before.kind);
+        assert_eq!(game.current.x, before.x);
+        assert_eq!(game.current.y, before.y);
+        assert_eq!(game.current.rot, before.rot);
+        assert_eq!(game.lock_timer, Some(137));
+        assert_eq!(game.lock_resets, 3);
+        assert!(game.last_was_rotation);
+        assert!(game.last_rotation_upgrades_tspin);
     }
 }

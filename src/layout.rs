@@ -124,8 +124,10 @@ mod tests {
 
     #[test]
     fn never_uses_multi_row_cells() {
-        let mut s = Settings::default();
-        s.scale = ScaleMode::Auto;
+        let s = Settings {
+            scale: ScaleMode::Auto,
+            ..Settings::default()
+        };
         let l = Layout::compute_with_size(&s, 200, 60);
         // height is always VISIBLE_H rows of minos
         assert_eq!(l.board_pixel_h, VISIBLE_H as u16);
@@ -133,16 +135,20 @@ mod tests {
 
     #[test]
     fn auto_picks_something() {
-        let mut s = Settings::default();
-        s.scale = ScaleMode::Auto;
+        let s = Settings {
+            scale: ScaleMode::Auto,
+            ..Settings::default()
+        };
         let l = Layout::compute_with_size(&s, 120, 40);
         assert!((1..=4).contains(&l.cell_w));
     }
 
     #[test]
     fn large_terminal_prefers_at_least_2() {
-        let mut s = Settings::default();
-        s.scale = ScaleMode::Auto;
+        let s = Settings {
+            scale: ScaleMode::Auto,
+            ..Settings::default()
+        };
         let l = Layout::compute_with_size(&s, 120, 40);
         assert!(l.cell_w >= 2, "expected wide scale, got {}", l.cell_w);
     }

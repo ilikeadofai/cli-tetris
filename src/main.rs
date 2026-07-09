@@ -24,19 +24,41 @@ use settings::Settings;
 use std::io::{stdout, Result};
 use std::time::{Duration, Instant};
 
+struct TerminalSession;
+
+impl TerminalSession {
+    fn enter() -> Result<Self> {
+        enable_raw_mode()?;
+
+        let mut out = stdout();
+        if let Err(error) = out.execute(EnterAlternateScreen) {
+            let _ = disable_raw_mode();
+            return Err(error);
+        }
+        if let Err(error) = out.execute(Hide) {
+            let _ = out.execute(Show);
+            let _ = out.execute(LeaveAlternateScreen);
+            let _ = disable_raw_mode();
+            return Err(error);
+        }
+
+        Ok(Self)
+    }
+}
+
+impl Drop for TerminalSession {
+    fn drop(&mut self) {
+        let mut out = stdout();
+        let _ = out.execute(Show);
+        let _ = out.execute(LeaveAlternateScreen);
+        let _ = disable_raw_mode();
+    }
+}
+
 fn main() -> Result<()> {
-    let mut stdout = stdout();
-    enable_raw_mode()?;
-    stdout.execute(EnterAlternateScreen)?;
-    stdout.execute(Hide)?;
+    let _terminal = TerminalSession::enter()?;
 
-    let result = run_game();
-
-    let _ = stdout.execute(Show);
-    let _ = stdout.execute(LeaveAlternateScreen);
-    let _ = disable_raw_mode();
-
-    result
+    run_game()
 }
 
 fn run_game() -> Result<()> {
@@ -109,12 +131,7 @@ fn run_game() -> Result<()> {
                     let prev_screen = menu.screen;
                     match menu.screen {
                         AppScreen::Title => {
-                            if handle_title_key(
-                                key.code,
-                                &mut menu,
-                                &mut game,
-                                &mut settings,
-                            )? {
+                            if handle_title_key(key.code, &mut menu, &mut game, &mut settings)? {
                                 settings.save();
                                 return Ok(());
                             }
@@ -289,9 +306,7 @@ fn handle_play_key(
             *need_clear = true;
         }
         KeyCode::Esc => {
-            if game.phase == GamePhase::Playing {
-                game.toggle_pause();
-            } else if game.phase == GamePhase::Paused {
+            if matches!(game.phase, GamePhase::Playing | GamePhase::Paused) {
                 game.toggle_pause();
             } else if game.phase == GamePhase::GameOver {
                 game.restart(settings);

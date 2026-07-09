@@ -104,9 +104,9 @@ impl Theme {
                 PieceKind::L => rgb(0xF0, 0xA0, 0x00),
             },
             ThemeId::Catppuccin => match kind {
-                PieceKind::I => rgb(0x89, 0xdC, 0xeb),
+                PieceKind::I => rgb(0x89, 0xdc, 0xeb),
                 PieceKind::O => rgb(0xf9, 0xe2, 0xaf),
-                PieceKind::T => rgb(0xcB, 0xa6, 0xf7),
+                PieceKind::T => rgb(0xcb, 0xa6, 0xf7),
                 PieceKind::S => rgb(0xa6, 0xe3, 0xa1),
                 PieceKind::Z => rgb(0xf3, 0x8b, 0xa8),
                 PieceKind::J => rgb(0x89, 0xb4, 0xfa),
@@ -295,7 +295,6 @@ impl Theme {
             ThemeId::Monochrome => rgb(0x2a, 0x2a, 0x2a),
         }
     }
-
 }
 
 fn rgb(r: u8, g: u8, b: u8) -> Color {

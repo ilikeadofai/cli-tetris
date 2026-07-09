@@ -22,21 +22,21 @@ impl Board {
     }
 
     pub fn get(&self, x: i32, y: i32) -> Cell {
-        if x < 0 || x >= BOARD_W || y < 0 || y >= BOARD_H {
+        if !(0..BOARD_W).contains(&x) || !(0..BOARD_H).contains(&y) {
             return Cell::Filled(PieceKind::I); // wall
         }
         self.cells[(y * BOARD_W + x) as usize]
     }
 
     pub fn set(&mut self, x: i32, y: i32, cell: Cell) {
-        if x >= 0 && x < BOARD_W && y >= 0 && y < BOARD_H {
+        if (0..BOARD_W).contains(&x) && (0..BOARD_H).contains(&y) {
             self.cells[(y * BOARD_W + x) as usize] = cell;
         }
     }
 
     pub fn fits(&self, piece: &Piece) -> bool {
         for (x, y) in piece.cells() {
-            if x < 0 || x >= BOARD_W || y < 0 || y >= BOARD_H {
+            if !(0..BOARD_W).contains(&x) || !(0..BOARD_H).contains(&y) {
                 return false;
             }
             if self.get(x, y) != Cell::Empty {

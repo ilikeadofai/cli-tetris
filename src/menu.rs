@@ -1,8 +1,6 @@
 //! Title and settings menu navigation (TETR.IO-style tabs).
 
-use crate::settings::{
-    on_off, GravityCurve, HandlingPreset, Settings,
-};
+use crate::settings::{on_off, GravityCurve, HandlingPreset, Settings};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppScreen {
@@ -192,8 +190,7 @@ impl MenuState {
                     settings.mark_handling_custom();
                 }
                 2 => {
-                    settings.arr_ms =
-                        (settings.arr_ms as i64 + dir as i64).clamp(0, 200) as u64;
+                    settings.arr_ms = (settings.arr_ms as i64 + dir as i64).clamp(0, 200) as u64;
                     settings.mark_handling_custom();
                 }
                 3 => {
@@ -229,8 +226,7 @@ impl MenuState {
             },
             SettingsTab::Gameplay => match self.settings_row {
                 0 => {
-                    settings.start_level =
-                        (settings.start_level as i32 + dir).clamp(1, 20) as u32;
+                    settings.start_level = (settings.start_level as i32 + dir).clamp(1, 20) as u32;
                 }
                 1 => {
                     settings.lines_per_level =
@@ -259,8 +255,7 @@ impl MenuState {
                 6 => settings.hold_enabled = !settings.hold_enabled,
                 7 => settings.allow_180 = !settings.allow_180,
                 8 => {
-                    settings.next_count =
-                        (settings.next_count as i32 + dir).clamp(0, 5) as usize;
+                    settings.next_count = (settings.next_count as i32 + dir).clamp(0, 5) as usize;
                 }
                 9 => {
                     settings.line_clear_ms =
@@ -350,10 +345,7 @@ impl MenuState {
 pub fn settings_rows(settings: &Settings, tab: SettingsTab) -> Vec<(String, String)> {
     match tab {
         SettingsTab::Handling => vec![
-            (
-                "Preset".into(),
-                settings.handling_preset.label().into(),
-            ),
+            ("Preset".into(), settings.handling_preset.label().into()),
             ("DAS".into(), format!("{} ms", settings.das_ms)),
             ("ARR".into(), format!("{} ms", settings.arr_ms)),
             (

@@ -58,6 +58,10 @@ impl PieceKind {
     }
 
     pub fn cells(self, rot: u8) -> [(i32, i32); 4] {
+        if self == PieceKind::O {
+            return self.offsets0();
+        }
+
         let mut pts = self.offsets0();
         for _ in 0..(rot % 4) {
             pts = Self::rotate_cw(pts);
@@ -86,12 +90,7 @@ pub struct Piece {
 impl Piece {
     pub fn new(kind: PieceKind) -> Self {
         let (x, y) = kind.spawn_pos();
-        Self {
-            kind,
-            x,
-            y,
-            rot: 0,
-        }
+        Self { kind, x, y, rot: 0 }
     }
 
     pub fn cells(&self) -> [(i32, i32); 4] {
@@ -141,13 +140,32 @@ pub fn wall_kicks(kind: PieceKind, from: u8, to: u8) -> &'static [(i32, i32)] {
     }
 }
 
+/// Symmetric 180-degree kicks for TETR.IO-like handling.
+pub fn wall_kicks_180(kind: PieceKind) -> &'static [(i32, i32)] {
+    if kind == PieceKind::O {
+        &[(0, 0)]
+    } else {
+        &[(0, 0), (0, -1), (0, 1), (1, 0), (-1, 0), (2, 0), (-2, 0)]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn rotation_cycles() {
-        assert_eq!(PieceKind::T.cells(0), PieceKind::T.cells(4));
+        for kind in PieceKind::ALL {
+            assert_eq!(kind.cells(0), kind.cells(4), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn o_piece_rotation_does_not_translate() {
+        let spawn = PieceKind::O.cells(0);
+        for rot in 1..4 {
+            assert_eq!(PieceKind::O.cells(rot), spawn);
+        }
     }
 
     #[test]

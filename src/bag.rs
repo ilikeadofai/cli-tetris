@@ -19,7 +19,7 @@ impl SevenBag {
         // Prefill so next queue of 5 is always ready
         while s.queue.len() < 14 {
             s.refill_bag();
-            s.queue.extend(s.bag.drain(..));
+            s.queue.append(&mut s.bag);
         }
         s
     }
@@ -32,7 +32,7 @@ impl SevenBag {
     pub fn next(&mut self) -> PieceKind {
         if self.queue.len() < 7 {
             self.refill_bag();
-            self.queue.extend(self.bag.drain(..));
+            self.queue.append(&mut self.bag);
         }
         self.queue.remove(0)
     }
@@ -46,5 +46,23 @@ impl SevenBag {
 impl Default for SevenBag {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn consecutive_bags_each_contain_every_piece_once() {
+        let expected: HashSet<_> = PieceKind::ALL.into_iter().collect();
+        let mut bag = SevenBag::new();
+        let draws: Vec<_> = (0..70).map(|_| bag.next()).collect();
+
+        for chunk in draws.chunks_exact(7) {
+            let actual: HashSet<_> = chunk.iter().copied().collect();
+            assert_eq!(actual, expected);
+        }
     }
 }
